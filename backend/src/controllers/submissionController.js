@@ -21,6 +21,17 @@ async function submitAssignment(req, res) {
       });
     }
 
+    const enrollment = await queryDocuments(collections.ENROLLMENTS, [
+      { field: 'studentId', operator: '==', value: studentId },
+      { field: 'assignmentId', operator: '==', value: assignmentId }
+    ]);
+
+    if (enrollment.length === 0) {
+      return res.status(403).json({
+        error: 'You must join this assignment with a code before submitting'
+      });
+    }
+
     const dueDate = new Date(assignment.dueDate);
     const now = new Date();
     

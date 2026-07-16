@@ -10,7 +10,8 @@ const collections = {
   SCORES: 'scores',
   AUDIT_LOGS: 'auditLogs',
   EVENTS: 'events',
-  INTEGRITY_SCORES: 'integrityScores'
+  INTEGRITY_SCORES: 'integrityScores',
+  ENROLLMENTS: 'enrollments'
 };
 
 async function createDocument(collectionName, data, customId = null) {

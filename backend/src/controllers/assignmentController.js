@@ -1,10 +1,27 @@
+const crypto = require('crypto');
 const { createDocument, getDocument, updateDocument, deleteDocument, queryDocuments, collections, logAudit } = require('../services/databaseService');
 const { validateAssignment } = require('../services/validationService');
+
+// 6 uppercase hex chars, 16^6 ≈ 16.7M possibilities — not brute-forceable at
+// the rate-limited attempt rate the join endpoint allows. crypto.randomBytes
+// is used (not Math.random) so codes aren't predictable.
+async function generateUniqueAssignmentCode() {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const code = crypto.randomBytes(3).toString('hex').toUpperCase();
+    const existing = await queryDocuments(collections.ASSIGNMENTS, [
+      { field: 'assignmentCode', operator: '==', value: code }
+    ]);
+    if (existing.length === 0) return code;
+  }
+  throw new Error('Failed to generate a unique assignment code');
+}
 
 async function createAssignment(req, res) {
   try {
     const professorId = req.user.uid;
     const { title, description, type, allowedFileTypes, dueDate, plagiarismWeightage, criteriaWeightage } = req.body;
+
+    const assignmentCode = await generateUniqueAssignmentCode();
 
     const assignmentData = {
       professorId,
@@ -18,6 +35,7 @@ async function createAssignment(req, res) {
       plagiarismWeightage: plagiarismWeightage || 30,
       criteriaWeightage: criteriaWeightage || 70,
       status: 'active',
+      assignmentCode,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -91,9 +109,22 @@ async function getAssignmentsByProfessor(req, res) {
 async function getAllAssignments(req, res) {
   try {
     const studentId = req.user.uid;
-    const assignments = await queryDocuments(collections.ASSIGNMENTS, [
-      { field: 'status', operator: '==', value: 'active' }
+
+    // Only assignments this student has explicitly joined via a code are
+    // visible — never return every assignment in the system.
+    const enrollments = await queryDocuments(collections.ENROLLMENTS, [
+      { field: 'studentId', operator: '==', value: studentId }
     ]);
+
+    if (enrollments.length === 0) {
+      return res.status(200).json({ count: 0, assignments: [] });
+    }
+
+    const enrolledAssignmentIds = new Set(enrollments.map(e => e.assignmentId));
+    const assignmentDocs = await Promise.all(
+      [...enrolledAssignmentIds].map(id => getDocument(collections.ASSIGNMENTS, id))
+    );
+    const assignments = assignmentDocs.filter(Boolean);
 
     const submissions = await queryDocuments(collections.SUBMISSIONS, [
       { field: 'studentId', operator: '==', value: studentId }

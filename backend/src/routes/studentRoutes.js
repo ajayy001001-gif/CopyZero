@@ -1,14 +1,30 @@
 const express = require('express');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const router = express.Router();
 const assignmentController = require('../controllers/assignmentController');
 const submissionController = require('../controllers/submissionController');
 const draftController = require('../controllers/draftController');
 const studentScoreController = require('../controllers/studentScoreController');
+const enrollmentController = require('../controllers/enrollmentController');
 
 // NEW: Import HuggingFace controller for viewing evaluations
 const hfEvaluationController = require('../controllers/huggingFaceEvaluationController');
 
 const { verifyToken, checkVITEmail, checkRole } = require('../middleware/auth');
+
+// Prevents brute-force enumeration of assignment codes (16^6 ≈ 16.7M
+// possibilities, but still worth throttling attempts). Keyed per-student.
+const joinLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.user?.uid || ipKeyGenerator(req.ip),
+  message: { error: 'Too many join attempts, please try again in an hour' }
+});
+
+// Enrollment routes
+router.post('/join', verifyToken, checkVITEmail, checkRole(['student']), joinLimiter, enrollmentController.joinAssignment);
 
 // Assignment routes
 router.get('/assignments', verifyToken, checkVITEmail, checkRole(['student']), assignmentController.getAllAssignments);
