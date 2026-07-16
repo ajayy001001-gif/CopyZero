@@ -54,6 +54,7 @@ export const professorAPI = {
 };
 
 export const studentAPI = {
+  joinAssignment: (code) => api.post('/api/student/join', { code }),
   getAssignments: () => api.get('/api/student/assignments'),
   getAssignmentById: (id) => api.get(`/api/student/assignments/${id}`),
 

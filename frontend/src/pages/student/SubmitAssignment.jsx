@@ -4,6 +4,7 @@ import { studentAPI } from '../../services/api';
 import Sidebar from '../../components/layout/Sidebar';
 import LoadingDots from '../../components/common/LoadingDots';
 import BlockchainAnimation from '../../components/common/BlockchainAnimation';
+import useBehavioralTracker from '../../hooks/useBehavioralTracker';
 
 export default function SubmitAssignment() {
   const { assignmentId } = useParams();
@@ -19,6 +20,14 @@ export default function SubmitAssignment() {
   const [verified, setVerified] = useState(false);
   const [error, setError] = useState('');
   const [lastSaved, setLastSaved] = useState(null);
+
+  // No submissionId until the student actually submits — the hook queues
+  // events locally until then and drains them via flushNow() on submit.
+  const { flushNow } = useBehavioralTracker({
+    isExamActive: !loading && !!assignment,
+    submissionId: null,
+    assignmentId
+  });
 
   useEffect(() => {
     fetchAssignment();
@@ -93,13 +102,14 @@ export default function SubmitAssignment() {
     }
 
     try {
-      await studentAPI.submitAssignment({
+      const response = await studentAPI.submitAssignment({
         assignmentId,
         fileContent: content,
         fileName: file ? file.name : 'text_submission.txt',
         fileType: file ? file.name.substring(file.name.lastIndexOf('.')) : '.txt',
         submissionType: useBlockchain ? 'blockchain' : 'direct',
       });
+      await flushNow(response.data.submission?.id);
       navigate('/student/dashboard');
     } catch (err) {
       setError(err.message || 'Failed to submit assignment');

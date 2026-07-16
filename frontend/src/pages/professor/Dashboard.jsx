@@ -8,7 +8,14 @@ export default function ProfessorDashboard() {
   const [assignments, setAssignments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [copiedId, setCopiedId] = useState(null);
   const navigate = useNavigate();
+
+  function handleCopyCode(assignment) {
+    navigator.clipboard.writeText(assignment.assignmentCode);
+    setCopiedId(assignment.id);
+    setTimeout(() => setCopiedId(null), 1500);
+  }
 
   useEffect(() => {
     fetchAssignments();
@@ -105,16 +112,29 @@ export default function ProfessorDashboard() {
                   
                   <div className="flex items-center gap-4 text-sm text-[var(--color-text-secondary)] mb-4">
                     <span>
-                      Due: {new Date(assignment.dueDate).toLocaleDateString('en-US', { 
-                        month: 'short', 
-                        day: 'numeric', 
-                        year: 'numeric' 
+                      Due: {new Date(assignment.dueDate).toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric'
                       })}
                     </span>
                     <span className="text-[var(--color-border)]">·</span>
                     <span>{assignment.submissionCount || 0} submissions</span>
                   </div>
-                  
+
+                  {assignment.assignmentCode && (
+                    <button
+                      onClick={() => handleCopyCode(assignment)}
+                      className="flex items-center gap-2 mb-4 px-3 py-1.5 rounded-md border border-[var(--color-border)] text-sm font-mono tracking-widest hover:border-white transition-colors"
+                      title="Copy join code"
+                    >
+                      <span>{assignment.assignmentCode}</span>
+                      <span className="text-xs text-[var(--color-text-tertiary)] font-sans tracking-normal">
+                        {copiedId === assignment.id ? 'Copied' : 'Copy'}
+                      </span>
+                    </button>
+                  )}
+
                   <div className="flex gap-3">
                     <button
                       onClick={() => navigate(`/professor/assignments/${assignment.id}`)}

@@ -8,6 +8,10 @@ export default function StudentDashboard() {
   const [assignments, setAssignments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [joinCode, setJoinCode] = useState('');
+  const [joining, setJoining] = useState(false);
+  const [joinError, setJoinError] = useState('');
+  const [joinSuccess, setJoinSuccess] = useState('');
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -22,6 +26,27 @@ export default function StudentDashboard() {
       setError('Failed to load assignments');
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleJoin(e) {
+    e.preventDefault();
+    setJoinError('');
+    setJoinSuccess('');
+
+    const code = joinCode.trim().toUpperCase();
+    if (!code) return;
+
+    setJoining(true);
+    try {
+      const response = await studentAPI.joinAssignment(code);
+      setJoinSuccess(`Joined "${response.data.assignment.title}"`);
+      setJoinCode('');
+      fetchAssignments();
+    } catch (err) {
+      setJoinError(err.response?.data?.error || 'Failed to join assignment');
+    } finally {
+      setJoining(false);
     }
   }
 
@@ -44,6 +69,41 @@ export default function StudentDashboard() {
             Assignments
           </h1>
         </div>
+
+        {/* Join with code */}
+        <form onSubmit={handleJoin} className="card mb-6 page-enter">
+          <label className="block text-xs text-[var(--color-text-secondary)] uppercase tracking-wider mb-2">
+            Join with code
+          </label>
+          <div className="flex gap-3">
+            <input
+              type="text"
+              value={joinCode}
+              onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+              placeholder="e.g. A1B2C3"
+              maxLength={6}
+              className="flex-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg px-4 py-2 text-white placeholder-[var(--color-text-tertiary)] focus:border-white focus:outline-none transition-colors font-mono tracking-widest uppercase"
+              disabled={joining}
+            />
+            <button
+              type="submit"
+              className="btn-outline text-sm px-6"
+              disabled={joining || joinCode.trim().length !== 6}
+            >
+              {joining ? 'Joining...' : 'Join'}
+            </button>
+          </div>
+          {joinError && (
+            <p className="text-sm mt-2" style={{ color: 'var(--color-accent-error)' }}>
+              {joinError}
+            </p>
+          )}
+          {joinSuccess && (
+            <p className="text-sm mt-2 text-[var(--color-text-secondary)]">
+              {joinSuccess}
+            </p>
+          )}
+        </form>
 
         {error && (
           <div
