@@ -57,6 +57,13 @@ export const professorAPI = {
   ollamaEvaluate: (submissionId) => api.post('/api/professor/ollama-evaluate', { submissionId }, { headers: getUserAIKeyHeader() }),
 
   checkOllamaHealth: () => api.get('/api/professor/ollama-health'),
+
+  createCodingQuestion: (data) => api.post('/api/professor/coding-questions', data),
+};
+
+export const proctorAPI = {
+  getEventTimeline: (submissionId, cursor) => api.get(`/api/events/${submissionId}`, { params: cursor ? { cursor } : {} }),
+  getEvidenceForEvent: (eventId) => api.get(`/api/proctor/evidence/${eventId}`),
 };
 
 export const studentAPI = {
@@ -77,6 +84,9 @@ export const studentAPI = {
   getScores: () => api.get('/api/student/scores'),
   getScoreByAssignment: (assignmentId) => api.get(`/api/student/scores/assignment/${assignmentId}`),
   getScoreById: (id) => api.get(`/api/student/scores/${id}`),
+
+  getCodingQuestions: (assignmentId) => api.get(`/api/student/coding-questions/${assignmentId}`),
+  submitCode: (data) => api.post('/api/student/submit-code', data),
 };
 
 export const aiAPI = {

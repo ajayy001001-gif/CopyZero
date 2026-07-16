@@ -206,9 +206,15 @@ Backend runs on `http://localhost:5000` (or your custom `PORT`), frontend on `ht
 
 ## Evaluation Model
 
-- **NVIDIA NIM — deepseek-ai/deepseek-v4-flash**: one combined call per submission covering plagiarism comparison, AI-generated-text likelihood, and rubric-criteria scoring with reasoning.
+- **Groq (llama-3.1-8b-instant), BYOK only**: one combined call per submission covering plagiarism comparison, AI-generated-text likelihood, and rubric-criteria scoring with reasoning. There is no platform-funded key — each professor brings their own free Groq API key via "Configure AI" in the sidebar; the key lives only in `sessionStorage` for that browser tab.
 
-The submission schema still carries `submissionType`/`blockchainTxHash` fields from an earlier design direction, but on-chain verification isn't currently wired up — those fields are unused placeholders today.
+## Coding Assessments & AI Proctoring
+
+- **In-browser code execution**: Python (via Pyodide, loaded lazily from the jsDelivr CDN) and JavaScript both run in sandboxed Web Workers — never on the main thread, never server-side. Students get instant pass/fail feedback against visible test cases; hidden test cases run too but their expected output is never sent to the browser, so results can't be hardcoded.
+- **Client-reported test results are a signal, not a verdict**: since execution is client-side, a submission's claimed pass rate is stored as `pending_verification` and cross-checked by the AI evaluation step (`testResultPlausibility`) — a professor should not treat 100% client-claimed pass rate on hidden tests as ground truth without that check.
+- **AI proctoring (webcam + screen)**: presence/count face detection only (`face-api.js`, tiny face detector, entirely client-side, no facial recognition or identity matching) and a rolling screen-share buffer. Evidence (snapshots/clips) is captured only on flagged moments — no face detected, multiple faces, tab switch, fullscreen exit, or screen-share stopped — never continuously.
+- **Data minimization**: webcam snapshots and screen clips are only ever the flagged evidence, capped at 500KB each. **These should be deleted once grading is finalized for a given assignment** — they're proctoring evidence for grading disputes, not a long-term record, and count as sensitive biometric-adjacent data. There's currently no automatic deletion job; this is a manual/cron follow-up if this app is used beyond a demo.
+- Requires a one-time manual step: download `face-api.js`'s tiny-face-detector model weights into `frontend/public/models/` — see `frontend/public/models/README.md`.
 
 ## Security
 

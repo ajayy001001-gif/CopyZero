@@ -4,7 +4,8 @@ const { getDocument, collections } = require('../services/databaseService');
 const ALLOWED_EVENT_TYPES = [
   'tab_switch', 'window_blur', 'window_focus', 'fullscreen_exit',
   'fullscreen_enter', 'copy_attempt', 'paste_attempt', 'right_click',
-  'refresh_attempt', 'idle_long', 'exam_start', 'exam_submit'
+  'refresh_attempt', 'idle_long', 'exam_start', 'exam_submit',
+  'webcam_no_face', 'webcam_multiple_faces', 'screen_share_stopped'
 ];
 const MAX_BATCH_SIZE = 50;
 const MAX_METADATA_STRING_LEN = 200;
@@ -64,9 +65,11 @@ async function batchEvents(req, res) {
     const now = new Date().toISOString();
     const batch = db.batch();
     const collectionRef = db.collection(collections.EVENTS);
+    const eventIds = [];
 
     events.forEach(evt => {
       const docRef = collectionRef.doc();
+      eventIds.push(docRef.id);
       batch.set(docRef, {
         studentId,
         assignmentId: submission.assignmentId,
@@ -79,7 +82,10 @@ async function batchEvents(req, res) {
     });
 
     await batch.commit();
-    return res.status(204).send();
+    // IDs returned in the same order as the submitted events — needed so
+    // proctoring evidence (webcam snapshots/screen clips) can be attached to
+    // the specific event it was captured for via POST /api/events/evidence.
+    return res.status(201).json({ eventIds });
 
   } catch (error) {
     console.error('Batch events error:', error);

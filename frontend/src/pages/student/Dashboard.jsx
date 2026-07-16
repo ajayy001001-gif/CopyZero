@@ -204,7 +204,7 @@ export default function StudentDashboard() {
                         </button>
                       ) : (
                         <button
-                          onClick={() => navigate(`/student/assignments/${assignment.id}/submit`)}
+                          onClick={() => navigate(`/student/assignments/${assignment.id}/${assignment.type === 'code' ? 'code' : 'submit'}`)}
                           className={`text-sm py-2 px-4 ${isUrgent ? 'btn-primary' : 'btn-outline'}`}
                         >
                           Submit

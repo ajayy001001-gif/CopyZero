@@ -11,7 +11,9 @@ const collections = {
   AUDIT_LOGS: 'auditLogs',
   EVENTS: 'events',
   INTEGRITY_SCORES: 'integrityScores',
-  ENROLLMENTS: 'enrollments'
+  ENROLLMENTS: 'enrollments',
+  CODING_QUESTIONS: 'codingQuestions',
+  EVIDENCE_CLIPS: 'evidenceClips'
 };
 
 async function createDocument(collectionName, data, customId = null) {

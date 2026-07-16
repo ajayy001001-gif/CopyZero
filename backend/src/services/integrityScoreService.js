@@ -15,7 +15,10 @@ function computeSignals(events) {
     fullscreenExitCount: 0,
     copyAttemptCount: 0,
     pasteAttemptCount: 0,
-    browserFocusLossCount: 0
+    browserFocusLossCount: 0,
+    webcamNoFaceCount: 0,
+    webcamMultipleFacesCount: 0,
+    screenShareStoppedCount: 0
   };
   let idleMs = 0;
   let examStart = null;
@@ -31,6 +34,9 @@ function computeSignals(events) {
       case 'paste_attempt': counts.pasteAttemptCount += 1; break;
       case 'window_blur': counts.browserFocusLossCount += 1; break;
       case 'idle_long': idleMs += Number(e.metadata?.duration) || 0; break;
+      case 'webcam_no_face': counts.webcamNoFaceCount += 1; break;
+      case 'webcam_multiple_faces': counts.webcamMultipleFacesCount += 1; break;
+      case 'screen_share_stopped': counts.screenShareStoppedCount += 1; break;
       case 'exam_start': if (!examStart) examStart = new Date(e.timestamp); break;
       case 'exam_submit': examEnd = new Date(e.timestamp); break;
       default: break;
@@ -42,10 +48,18 @@ function computeSignals(events) {
     ? Math.min(100, Math.round((idleMs / examDurationMs) * 100))
     : 0;
 
-  return { ...counts, idleTimePercent, totalEvents: events.length };
+  const faceDetectionStatus = counts.webcamMultipleFacesCount > 0
+    ? 'multiple_faces_detected'
+    : counts.webcamNoFaceCount > 0
+      ? 'face_missing_at_times'
+      : 'normal';
+
+  const screenShareStatus = counts.screenShareStoppedCount > 0 ? 'interrupted' : 'normal';
+
+  return { ...counts, idleTimePercent, totalEvents: events.length, faceDetectionStatus, screenShareStatus };
 }
 
-function heuristicIntegrityScore(signals, plagiarismScore, aiDetectionScore) {
+function heuristicIntegrityScore(signals, plagiarismScore, aiDetectionScore, testResultPlausibility) {
   let score = 100;
   score -= signals.tabSwitchCount * 3;
   score -= signals.fullscreenExitCount * 5;
@@ -53,6 +67,11 @@ function heuristicIntegrityScore(signals, plagiarismScore, aiDetectionScore) {
   score -= signals.pasteAttemptCount * 6;
   score -= signals.browserFocusLossCount * 2;
   score -= Math.round(signals.idleTimePercent / 5);
+  score -= signals.webcamNoFaceCount * 4;
+  score -= signals.webcamMultipleFacesCount * 8;
+  score -= signals.screenShareStoppedCount * 6;
+  const plausibilityPenalty = testResultPlausibility && testResultPlausibility.consistent === false ? 15 : 0;
+  score -= plausibilityPenalty;
   if (typeof plagiarismScore === 'number') score = Math.min(score, plagiarismScore);
   if (typeof aiDetectionScore === 'number') score = Math.min(score, aiDetectionScore);
   score = Math.max(0, Math.min(100, score));
@@ -62,12 +81,17 @@ function heuristicIntegrityScore(signals, plagiarismScore, aiDetectionScore) {
   return {
     overallScore: score,
     riskLevel,
-    explanation: 'AI scoring was unavailable (no Groq key attached, or a provider error), so this is a rule-based estimate from behavioral and content signals only.',
+    explanation: 'AI scoring was unavailable (no Groq key attached, or a provider error), so this is a rule-based estimate from behavioral, proctoring, and content signals only.',
     breakdown: {
       tabSwitching: -(signals.tabSwitchCount * 3),
       focusLoss: -(signals.browserFocusLossCount * 2),
       copyPaste: -(signals.copyAttemptCount * 4 + signals.pasteAttemptCount * 6),
       idleTime: -Math.round(signals.idleTimePercent / 5),
+      faceDetectionStatus: signals.faceDetectionStatus,
+      screenShareStatus: signals.screenShareStatus,
+      webcamPenalty: -(signals.webcamNoFaceCount * 4 + signals.webcamMultipleFacesCount * 8),
+      screenSharePenalty: -(signals.screenShareStoppedCount * 6),
+      testResultPlausibility: -plausibilityPenalty,
       contentSignals: 0
     }
   };
@@ -77,8 +101,12 @@ function heuristicIntegrityScore(signals, plagiarismScore, aiDetectionScore) {
 // Groq key exists, so this only produces a real AI score when the caller
 // passes the professor's own BYOK key (userKey) — otherwise callGroq throws
 // immediately and the catch below degrades to the heuristic-only score.
-async function computeIntegrityScore({ submissionId, events, plagiarismScore, aiDetectionScore, userKey = null }) {
+async function computeIntegrityScore({ submissionId, events, plagiarismScore, aiDetectionScore, userKey = null, testResultPlausibility = null }) {
   const signals = computeSignals(events || []);
+
+  const codingBlock = testResultPlausibility
+    ? `\n- Coding test-result plausibility: ${testResultPlausibility.consistent ? 'consistent with code logic' : 'FLAGGED — ' + (testResultPlausibility.concern || 'inconsistent with code logic')}`
+    : '';
 
   const prompt = `You are assessing exam-taking behavior for academic integrity, combining automated proctoring signals with plagiarism/AI-detection results.
 
@@ -91,9 +119,13 @@ BEHAVIORAL SIGNALS:
 - Idle time: ${signals.idleTimePercent}% of session
 - Total tracked events: ${signals.totalEvents}
 
+PROCTORING SIGNALS:
+- Webcam face detection: ${signals.faceDetectionStatus} (no-face checks: ${signals.webcamNoFaceCount}, multiple-face checks: ${signals.webcamMultipleFacesCount})
+- Screen share: ${signals.screenShareStatus} (stopped/interrupted ${signals.screenShareStoppedCount} time(s))
+
 CONTENT SIGNALS:
 - Plagiarism score: ${typeof plagiarismScore === 'number' ? plagiarismScore + '/100 (100 = no concerns)' : 'not available'}
-- AI-generated text score: ${typeof aiDetectionScore === 'number' ? aiDetectionScore + '/100 (100 = confidently human)' : 'not available'}
+- AI-generated text score: ${typeof aiDetectionScore === 'number' ? aiDetectionScore + '/100 (100 = confidently human)' : 'not available'}${codingBlock}
 
 Return ONLY a JSON object, no markdown fences, no commentary, in exactly this shape:
 {
@@ -105,6 +137,9 @@ Return ONLY a JSON object, no markdown fences, no commentary, in exactly this sh
     "focusLoss": <weighted contribution>,
     "copyPaste": <weighted contribution>,
     "idleTime": <weighted contribution>,
+    "webcamPenalty": <weighted contribution>,
+    "screenSharePenalty": <weighted contribution>,
+    "testResultPlausibility": <weighted contribution, 0 if not a coding submission>,
     "contentSignals": <weighted contribution>
   }
 }`;
@@ -114,11 +149,11 @@ Return ONLY a JSON object, no markdown fences, no commentary, in exactly this sh
     const raw = await callGroq([
       { role: 'system', content: 'You are a fair, evidence-based academic integrity analyst. Always return valid JSON only, matching the requested schema exactly.' },
       { role: 'user', content: prompt }
-    ], { maxTokens: 400, temperature: 0.2, userKey });
+    ], { maxTokens: 450, temperature: 0.2, userKey });
     result = extractJson(raw);
   } catch (err) {
     console.error(`[Integrity] AI scoring failed for submission ${submissionId}: ${err.message}`);
-    result = heuristicIntegrityScore(signals, plagiarismScore, aiDetectionScore);
+    result = heuristicIntegrityScore(signals, plagiarismScore, aiDetectionScore, testResultPlausibility);
   }
 
   const record = {
@@ -130,6 +165,7 @@ Return ONLY a JSON object, no markdown fences, no commentary, in exactly this sh
     breakdown: result.breakdown,
     plagiarismScore: typeof plagiarismScore === 'number' ? plagiarismScore : null,
     aiDetectionScore: typeof aiDetectionScore === 'number' ? aiDetectionScore : null,
+    testResultPlausibility: testResultPlausibility || null,
     computedAt: new Date().toISOString()
   };
 

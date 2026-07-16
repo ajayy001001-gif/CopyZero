@@ -53,7 +53,12 @@ function extractJson(text) {
 // Single combined call: plagiarism signal + AI-text signal + criteria scoring.
 // Submission text and comparison set are both truncated to keep token usage
 // (and therefore the caller's own quota burn) low.
-async function analyzeSubmission(text, criteria, otherSubmissions = [], userKey = null) {
+// codingContext (optional): { language, testResultSummary: { totalClaimed,
+// passedClaimed, passRate } } — when present, the client-reported test
+// results (which cannot be trusted for hidden test cases since execution is
+// client-side) are given to the model as ONE MORE plausibility signal, not
+// as the grade itself.
+async function analyzeSubmission(text, criteria, otherSubmissions = [], userKey = null, codingContext = null) {
   const criteriaList = criteria
     .map((c, i) => `${i + 1}. ${c.name} (${c.maxPoints}pts)${c.description ? ': ' + c.description : ''}`)
     .join('\n');
@@ -65,6 +70,16 @@ async function analyzeSubmission(text, criteria, otherSubmissions = [], userKey 
         .join('\n\n')
     : '(No other submissions to compare against yet.)';
 
+  const codingBlock = codingContext
+    ? `\nCODING SUBMISSION CONTEXT:
+This is a ${codingContext.language} code submission. The student's browser
+self-reported ${codingContext.testResultSummary.passedClaimed}/${codingContext.testResultSummary.totalClaimed} test cases passing (${Math.round((codingContext.testResultSummary.passRate || 0) * 100)}%). This claim is client-side and unverified — sanity-check whether the code's actual logic plausibly produces that pass rate (e.g. does it handle the apparent problem at all, or is it empty/unrelated/obviously broken while claiming high pass rates?).\n`
+    : '';
+
+  const plausibilityField = codingContext
+    ? `,\n  "testResultPlausibility": {"consistent": <bool, true if the code logic plausibly matches the claimed test pass rate>, "concern": "<1 sentence if inconsistent, or null>"}`
+    : '';
+
   const userPrompt = `You are evaluating a student's assignment submission for academic integrity and quality.
 
 CRITERIA:
@@ -74,7 +89,7 @@ SUBMISSION TO EVALUATE:
 """
 ${text.substring(0, 3000)}
 """
-
+${codingBlock}
 OTHER STUDENTS' SUBMISSIONS FOR THE SAME ASSIGNMENT (for plagiarism comparison only):
 ${othersBlock}
 
@@ -90,7 +105,7 @@ Return ONLY a JSON object, no markdown fences, no commentary, in exactly this sh
   "overallQuality": <0-100>,
   "strengths": ["<point>"],
   "improvements": ["<point>"],
-  "detailedFeedback": "<2-3 sentences, specific to this submission>"
+  "detailedFeedback": "<2-3 sentences, specific to this submission>"${plausibilityField}
 }`;
 
   const raw = await callGroq([
@@ -111,7 +126,9 @@ function combine(analysis) {
 // cfg.userKey is required — callers must validate format and reject before
 // reaching here (see groqEvaluationController.js).
 async function evaluateSubmissionWithGroq(data, cfg = {}) {
-  const analysis = await analyzeSubmission(data.text, data.criteria, data.otherSubmissions || [], cfg.userKey || null);
+  const analysis = await analyzeSubmission(
+    data.text, data.criteria, data.otherSubmissions || [], cfg.userKey || null, data.codingContext || null
+  );
   const plag = combine(analysis);
 
   const pw = data.plagiarismWeightage || 30;
@@ -144,6 +161,7 @@ async function evaluateSubmissionWithGroq(data, cfg = {}) {
     timestamp: new Date().toISOString(),
     usingGroq: true,
     usingUserKey: true,
+    testResultPlausibility: analysis.testResultPlausibility || null,
     model: GROQ_MODEL
   };
 

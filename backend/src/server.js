@@ -88,6 +88,8 @@ const integrityRoutes = require('./routes/integrityRoutes');
 app.use('/api/integrity', integrityRoutes);
 const aiRoutes = require('./routes/aiRoutes');
 app.use('/api/ai', aiRoutes);
+const proctorRoutes = require('./routes/proctorRoutes');
+app.use('/api/proctor', proctorRoutes);
 
 app.use((req, res) => {
   res.status(404).json({
@@ -103,14 +105,32 @@ app.use((err, req, res, next) => {
   });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server is running on port ${PORT}`);
   console.log(`📍 Environment: ${process.env.NODE_ENV}`);
   console.log(`🔗 URL: http://localhost:${PORT}`);
 });
 
-process.on('unhandledRejection', (err) => {
-  console.log('UNHANDLED REJECTION! 💥 Shutting down...');
-  console.log(err.name, err.message);
-  process.exit(1);
-});
+// An unhandled rejection means the process is in an unknown state, so we
+// still exit rather than limp on — but gracefully: stop accepting new
+// connections and let in-flight requests finish first, instead of dropping
+// them mid-response. The forced exit is a safety net in case close() hangs
+// (e.g. a request stuck waiting on a slow Firestore call).
+function shutdown(err, signal) {
+  console.error(`${signal} — shutting down gracefully...`);
+  console.error(err?.name, err?.message);
+
+  const forceExit = setTimeout(() => {
+    console.error('Graceful shutdown timed out, forcing exit');
+    process.exit(1);
+  }, 10000);
+  forceExit.unref();
+
+  server.close(() => {
+    clearTimeout(forceExit);
+    process.exit(1);
+  });
+}
+
+process.on('unhandledRejection', (err) => shutdown(err, 'UNHANDLED REJECTION! 💥'));
+process.on('uncaughtException', (err) => shutdown(err, 'UNCAUGHT EXCEPTION! 💥'));

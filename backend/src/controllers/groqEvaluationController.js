@@ -61,6 +61,23 @@ async function autoEvaluateWithGroq(req, res) {
       rubric = rubrics[0];
     }
 
+    // Coding submissions carry client-reported (unverifiable) test results —
+    // pass them as one more plausibility signal to the AI evaluator, never
+    // as the grade itself.
+    let codingContext = null;
+    if (submission.submissionKind === 'code' && Array.isArray(submission.claimedTestResults)) {
+      const total = submission.claimedTestResults.length;
+      const passed = submission.claimedTestResults.filter(r => r.passed).length;
+      codingContext = {
+        language: submission.language,
+        testResultSummary: {
+          totalClaimed: total,
+          passedClaimed: passed,
+          passRate: total > 0 ? passed / total : 0
+        }
+      };
+    }
+
     const submissionData = {
       text: submission.fileContent,
       criteria: rubric.criteria.map(c => ({
@@ -69,7 +86,8 @@ async function autoEvaluateWithGroq(req, res) {
         maxPoints: c.maxPoints
       })),
       plagiarismWeightage: assignment.plagiarismWeightage,
-      criteriaWeightage: assignment.criteriaWeightage
+      criteriaWeightage: assignment.criteriaWeightage,
+      codingContext
     };
 
     const config = {
@@ -110,6 +128,7 @@ async function autoEvaluateWithGroq(req, res) {
         evaluatedAt: results.timestamp,
         usingGroq: true,
         usingUserKey: true,
+        testResultPlausibility: results.testResultPlausibility,
         model: config.model
       }
     };

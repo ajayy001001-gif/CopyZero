@@ -4,6 +4,7 @@ import { professorAPI } from '../../services/api';
 import Sidebar from '../../components/layout/Sidebar';
 import LoadingDots from '../../components/common/LoadingDots';
 import AiEvaluatingAnimation from '../../components/common/AiEvaluatingAnimation';
+import EventTimeline from '../../components/proctoring/EventTimeline';
 import { hasStoredAIKey } from '../../lib/aiKeyStorage';
 
 export default function EvaluateSubmission() {
@@ -120,6 +121,7 @@ export default function EvaluateSubmission() {
           strengths: metadata.strengths,
           improvements: metadata.improvements,
           evaluatedAt: metadata.evaluatedAt,
+          testResultPlausibility: metadata.testResultPlausibility || null,
         });
       }
     } catch (err) {
@@ -146,6 +148,7 @@ export default function EvaluateSubmission() {
         plagiarismScore,
         criteriaScores,
         feedback,
+        testResultPlausibility: aiAnalysis?.testResultPlausibility || null,
       });
       navigate(`/professor/submissions/${submission.assignmentId}`);
     } catch (err) {
@@ -270,6 +273,14 @@ export default function EvaluateSubmission() {
           )}
         </div>
 
+        {/* Proctoring Timeline */}
+        <div className="card mb-6 page-enter" style={{ animationDelay: '120ms' }}>
+          <h3 className="text-sm text-[var(--color-text-secondary)] uppercase tracking-wider mb-4">
+            Proctoring Timeline
+          </h3>
+          <EventTimeline submissionId={submissionId} />
+        </div>
+
         {/* AI Analysis Results */}
         {aiAnalysis && (
           <div className="card mb-6 page-enter" style={{ animationDelay: '150ms' }}>
@@ -302,6 +313,24 @@ export default function EvaluateSubmission() {
                 </p>
               </div>
             </div>
+
+            {aiAnalysis.testResultPlausibility && (
+              <div
+                className="mb-4 p-3 rounded-lg"
+                style={{
+                  background: aiAnalysis.testResultPlausibility.consistent ? 'var(--color-surface)' : 'rgba(255, 59, 48, 0.06)'
+                }}
+              >
+                <p className="text-xs text-[var(--color-text-secondary)] uppercase tracking-wider mb-2">
+                  Test Result Plausibility (coding submission)
+                </p>
+                <p className="text-sm" style={{ color: aiAnalysis.testResultPlausibility.consistent ? undefined : 'var(--color-accent-error)' }}>
+                  {aiAnalysis.testResultPlausibility.consistent
+                    ? 'Code logic is consistent with the claimed test results.'
+                    : `Flagged: ${aiAnalysis.testResultPlausibility.concern || 'code logic may not match claimed test results'}`}
+                </p>
+              </div>
+            )}
 
             {aiAnalysis.plagiarismDetails && (
               <div className="mb-4 p-3 bg-[var(--color-surface)] rounded-lg">

@@ -16,6 +16,7 @@ import EvaluateSubmission from './pages/professor/EvaluateSubmission';
 // Student Pages
 import StudentDashboard from './pages/student/Dashboard';
 import SubmitAssignment from './pages/student/SubmitAssignment';
+import CodingExam from './pages/student/CodingExam';
 import ViewSubmission from './pages/student/ViewSubmission';
 import Scores from './pages/student/Scores';
 
@@ -85,6 +86,14 @@ function App() {
             element={
               <ProtectedRoute allowedRoles={['student']}>
                 <SubmitAssignment />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/student/assignments/:assignmentId/code"
+            element={
+              <ProtectedRoute allowedRoles={['student']}>
+                <CodingExam />
               </ProtectedRoute>
             }
           />

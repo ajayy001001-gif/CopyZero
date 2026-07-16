@@ -5,6 +5,7 @@ const assignmentController = require('../controllers/assignmentController');
 const rubricController = require('../controllers/rubricController');
 const evaluationController = require('../controllers/evaluationController');
 const groqEvaluationController = require('../controllers/groqEvaluationController');
+const codingQuestionController = require('../controllers/codingQuestionController');
 // NOTE: AI evaluation is BYOK-only (Groq, llama-3.1-8b-instant) — there is
 // no platform-funded key. Every request must supply its own valid
 // X-User-AI-Key header or the controller rejects it before any AI call.
@@ -79,6 +80,11 @@ router.patch('/scores/:scoreId/override',
 router.get('/scores/assignment/:assignmentId',
   verifyToken, checkVITEmail, checkRole(['professor']),
   evaluationController.getScoresByAssignment);
+
+// ── Coding question routes ───────────────────────────────────────────────────────
+router.post('/coding-questions',
+  verifyToken, checkVITEmail, checkRole(['professor']),
+  codingQuestionController.createCodingQuestion);
 
 // ── AI evaluation routes (powered by Groq internally) ───────────────────────────
 // Route paths kept the same so frontend needs no changes

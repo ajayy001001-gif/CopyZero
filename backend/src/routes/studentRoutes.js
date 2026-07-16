@@ -6,6 +6,8 @@ const submissionController = require('../controllers/submissionController');
 const draftController = require('../controllers/draftController');
 const studentScoreController = require('../controllers/studentScoreController');
 const enrollmentController = require('../controllers/enrollmentController');
+const codingQuestionController = require('../controllers/codingQuestionController');
+const codeSubmissionController = require('../controllers/codeSubmissionController');
 
 // NEW: Import HuggingFace controller for viewing evaluations
 const hfEvaluationController = require('../controllers/huggingFaceEvaluationController');
@@ -35,6 +37,10 @@ router.post('/submit', verifyToken, checkVITEmail, checkRole(['student']), submi
 router.get('/submissions', verifyToken, checkVITEmail, checkRole(['student']), submissionController.getMySubmissions);
 router.get('/submissions/:submissionId', verifyToken, checkVITEmail, checkRole(['student']), submissionController.getSubmissionById);
 router.get('/submissions/assignment/:assignmentId', verifyToken, checkVITEmail, checkRole(['student']), submissionController.getSubmissionByAssignment);
+
+// Coding assessment routes
+router.get('/coding-questions/:assignmentId', verifyToken, checkVITEmail, checkRole(['student']), codingQuestionController.getCodingQuestionsForStudent);
+router.post('/submit-code', verifyToken, checkVITEmail, checkRole(['student']), codeSubmissionController.submitCode);
 
 // Draft routes
 router.post('/drafts', verifyToken, checkVITEmail, checkRole(['student']), draftController.saveDraft);

@@ -7,7 +7,7 @@ const { isValidUserKey } = require('../services/aiProviderService');
 async function evaluateSubmission(req, res) {
   try {
     const professorId = req.user.uid;
-    const { submissionId, plagiarismScore, criteriaScores, feedback } = req.body;
+    const { submissionId, plagiarismScore, criteriaScores, feedback, testResultPlausibility } = req.body;
 
     const submission = await getDocument(collections.SUBMISSIONS, submissionId);
 
@@ -131,12 +131,18 @@ async function evaluateSubmission(req, res) {
       const events = await queryDocuments(collections.EVENTS, [
         { field: 'submissionId', operator: '==', value: submissionId }
       ]);
+      const safePlausibility = testResultPlausibility && typeof testResultPlausibility === 'object'
+        && typeof testResultPlausibility.consistent === 'boolean'
+        ? { consistent: testResultPlausibility.consistent, concern: typeof testResultPlausibility.concern === 'string' ? testResultPlausibility.concern.slice(0, 300) : null }
+        : null;
+
       await computeIntegrityScore({
         submissionId,
         events,
         plagiarismScore,
         aiDetectionScore: null,
-        userKey
+        userKey,
+        testResultPlausibility: safePlausibility
       });
     } catch (integrityErr) {
       console.error('Integrity score computation failed:', integrityErr.message);
