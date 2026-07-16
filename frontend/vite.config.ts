@@ -12,11 +12,11 @@ export default defineConfig(({ mode }) => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
-  // Vercel dashboard env vars override committed `.env.production` at build
-  // time; pin the hosted backend URL so a stale VITE_API_URL can't leak through.
+  // Same-origin `/api/*` requests are proxied to Render via root `vercel.json`,
+  // avoiding browser CORS when the backend allowlist hasn't been updated yet.
   ...(mode === 'production' && {
     define: {
-      'import.meta.env.VITE_API_URL': JSON.stringify('https://copyzero.onrender.com'),
+      'import.meta.env.VITE_API_URL': JSON.stringify(''),
     },
   }),
 }));
