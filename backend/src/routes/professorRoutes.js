@@ -113,6 +113,10 @@ router.get('/assessments/:id',
   verifyToken, checkVITEmail, checkRole(['professor']),
   assessmentController.getAssessmentById);
 
+router.get('/assessments/:id/submissions',
+  verifyToken, checkVITEmail, checkRole(['professor']),
+  assessmentController.getAssessmentSubmissions);
+
 router.put('/assessments/:id',
   verifyToken, checkVITEmail, checkRole(['professor']),
   assessmentController.updateAssessment);

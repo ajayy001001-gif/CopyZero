@@ -13,6 +13,7 @@ import AssignmentDetails from './pages/professor/AssignmentDetails';
 import Submissions from './pages/professor/Submissions';
 import EvaluateSubmission from './pages/professor/EvaluateSubmission';
 import AssessmentBuilder from './pages/professor/AssessmentBuilder';
+import AssessmentResults from './pages/professor/AssessmentResults';
 
 // Student Pages
 import StudentDashboard from './pages/student/Dashboard';
@@ -81,6 +82,14 @@ function App() {
             element={
               <ProtectedRoute allowedRoles={['professor']}>
                 <AssessmentBuilder />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/professor/assessments/:id/results"
+            element={
+              <ProtectedRoute allowedRoles={['professor']}>
+                <AssessmentResults />
               </ProtectedRoute>
             }
           />

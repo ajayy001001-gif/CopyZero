@@ -362,6 +362,69 @@ async function getAssessmentsForStudent(req, res) {
   }
 }
 
+// GET /api/professor/assessments/:id/submissions — professor only,
+// ownership-checked. Returns each student's attempt with scores and the
+// integrity record (joined inline: the standalone /api/integrity endpoint
+// only resolves ownership for assignment submissions, not assessment ones).
+async function getAssessmentSubmissions(req, res) {
+  try {
+    const professorId = req.user.uid;
+    const { id } = req.params;
+
+    const assessment = await getDocument(collections.ASSESSMENTS, id);
+    if (!assessment) {
+      return res.status(404).json({ error: 'Assessment not found' });
+    }
+    if (assessment.professorId !== professorId) {
+      return res.status(403).json({ error: 'You can only view results for your own assessments' });
+    }
+
+    const submissions = await queryDocuments(collections.ASSESSMENT_SUBMISSIONS, [
+      { field: 'assessmentId', operator: '==', value: id }
+    ]);
+
+    const enriched = await Promise.all(submissions.map(async (s) => {
+      const [user, integrity] = await Promise.all([
+        getDocument(collections.USERS, s.studentId),
+        getDocument(collections.INTEGRITY_SCORES, s.id)
+      ]);
+      return {
+        id: s.id,
+        studentName: user?.fullName || user?.email || s.studentId,
+        studentEmail: user?.email || null,
+        status: s.status,
+        startedAt: s.startedAt,
+        submittedAt: s.submittedAt,
+        mcqScore: s.mcqScore,
+        mcqMaxScore: s.mcqMaxScore,
+        codingScore: s.codingScore,
+        codingMaxScore: s.codingMaxScore,
+        totalScore: s.totalScore,
+        codingDetails: s.codingDetails || [],
+        integrityScore: integrity || null
+      };
+    }));
+
+    // Completed attempts first, then most-recently-started.
+    enriched.sort((a, b) => {
+      const ao = a.status === 'in_progress' ? 1 : 0;
+      const bo = b.status === 'in_progress' ? 1 : 0;
+      if (ao !== bo) return ao - bo;
+      return new Date(b.startedAt) - new Date(a.startedAt);
+    });
+
+    return res.status(200).json({
+      assessmentTitle: assessment.title,
+      count: enriched.length,
+      submissions: enriched
+    });
+
+  } catch (error) {
+    console.error('Get assessment submissions error:', error);
+    return res.status(500).json({ error: 'Failed to fetch assessment results' });
+  }
+}
+
 module.exports = {
   createAssessment,
   updateAssessment,
@@ -369,5 +432,6 @@ module.exports = {
   getAssessmentsByProfessor,
   getAssessmentById,
   getAssessmentsForStudent,
+  getAssessmentSubmissions,
   sanitizeForStudent
 };

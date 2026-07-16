@@ -272,12 +272,20 @@ export default function ProfessorDashboard() {
                       </button>
                     )}
 
-                    <button
-                      onClick={() => navigate(`/professor/assessments/${assessment.id}`)}
-                      className="btn-outline w-full text-sm py-2"
-                    >
-                      Edit
-                    </button>
+                    <div className="flex gap-3">
+                      <button
+                        onClick={() => navigate(`/professor/assessments/${assessment.id}`)}
+                        className="btn-outline flex-1 text-sm py-2"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => navigate(`/professor/assessments/${assessment.id}/results`)}
+                        className="btn-outline flex-1 text-sm py-2"
+                      >
+                        View Results
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>

@@ -66,6 +66,7 @@ export const professorAPI = {
   getAssessmentById: (id) => api.get(`/api/professor/assessments/${id}`),
   updateAssessment: (id, data) => api.put(`/api/professor/assessments/${id}`, data),
   publishAssessment: (id) => api.post(`/api/professor/assessments/${id}/publish`),
+  getAssessmentSubmissions: (id) => api.get(`/api/professor/assessments/${id}/submissions`),
 
   // BYOK header attached so generation uses the professor's own Groq key if
   // configured — falls back to platform key / NIM server-side if absent.
