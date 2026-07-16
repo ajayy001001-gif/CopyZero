@@ -1,11 +1,26 @@
 const { evaluateSubmissionWithGroq, checkGroqStatus } = require('../services/groqEvaluationService');
 const { evaluateSubmissionWithHuggingFace } = require('../services/huggingFaceEvaluationService');
+const { isValidUserKey } = require('../services/aiProviderService');
 const { getDocument, collections, queryDocuments } = require('../services/databaseService');
 
 async function autoEvaluateWithGroq(req, res) {
   try {
     const professorId = req.user.uid;
     const { submissionId } = req.body;
+
+    // BYOK: a user-supplied key must match the expected Groq format exactly
+    // or the request is rejected outright — never silently ignored (that
+    // could mask a copy-paste error) and never logged beyond presence.
+    const rawUserKey = req.headers['x-user-ai-key'];
+    let userKey = null;
+    if (rawUserKey) {
+      if (!isValidUserKey('groq', rawUserKey)) {
+        console.log('[AI] user-provided key used: false (rejected — invalid format)');
+        return res.status(400).json({ error: 'Invalid API key format' });
+      }
+      userKey = rawUserKey;
+    }
+    console.log(`[AI] user-provided key used: ${!!userKey}`);
 
     console.log(`Starting Groq evaluation for submission: ${submissionId}`);
 
@@ -54,7 +69,8 @@ async function autoEvaluateWithGroq(req, res) {
     };
 
     const config = {
-      model: process.env.GROQ_MODEL || 'llama-3.1-8b-instant'
+      model: process.env.GROQ_MODEL || 'llama-3.1-8b-instant',
+      userKey
     };
 
     let results;
@@ -108,6 +124,7 @@ async function autoEvaluateWithGroq(req, res) {
         usingNim: false,
         usingGroq: !usedFallback,
         usingHuggingFace: usedFallback,
+        usingUserKey: !!userKey && !usedFallback,
         fallbackUsed: usedFallback,
         model: usedFallback ? 'HuggingFace (fallback)' : config.model
       }

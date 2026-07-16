@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { auth } from '../config/firebase';
+import { getUserAIKeyHeader } from '../lib/aiKeyStorage';
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:5000';
 
@@ -44,11 +45,13 @@ export const professorAPI = {
   getScores: (assignmentId) => api.get(`/api/professor/scores/assignment/${assignmentId}`),
 
   // ── Changed: renamed from ollamaEvaluate to aiEvaluate ──
-  // Route stays /ollama-evaluate — the controller now calls HuggingFace internally
-  aiEvaluate: (submissionId) => api.post('/api/professor/ollama-evaluate', { submissionId }),
+  // Route stays /ollama-evaluate — the controller now calls Groq internally.
+  // BYOK: attaches X-User-AI-Key from sessionStorage if the user configured
+  // their own key — absent header falls back to the platform key.
+  aiEvaluate: (submissionId) => api.post('/api/professor/ollama-evaluate', { submissionId }, { headers: getUserAIKeyHeader() }),
 
   // Keep old name as alias so nothing else breaks if referenced elsewhere
-  ollamaEvaluate: (submissionId) => api.post('/api/professor/ollama-evaluate', { submissionId }),
+  ollamaEvaluate: (submissionId) => api.post('/api/professor/ollama-evaluate', { submissionId }, { headers: getUserAIKeyHeader() }),
 
   checkOllamaHealth: () => api.get('/api/professor/ollama-health'),
 };
@@ -71,6 +74,11 @@ export const studentAPI = {
   getScores: () => api.get('/api/student/scores'),
   getScoreByAssignment: (assignmentId) => api.get(`/api/student/scores/assignment/${assignmentId}`),
   getScoreById: (id) => api.get(`/api/student/scores/${id}`),
+};
+
+export const aiAPI = {
+  testKey: (provider, key) => api.post('/api/ai/test-key', { provider, key }),
+  getHealth: () => api.get('/api/health/ai'),
 };
 
 export default api;

@@ -6,8 +6,9 @@ const dotenv = require('dotenv');
 
 dotenv.config();
 require('./config/firebase');
-const { verifyToken, checkRole } = require('./middleware/auth');
+const { verifyToken, checkVITEmail } = require('./middleware/auth');
 const { getProviderStatus } = require('./services/aiProviderService');
+const { getGroqUsage } = require('./services/groqEvaluationService');
 
 const app = express();
 
@@ -78,14 +79,17 @@ app.get('/api/health', (req, res) => {
     environment: process.env.NODE_ENV
   });
 });
-app.get('/api/health/ai', verifyToken, checkRole(['professor']), (req, res) => {
+// Open to both roles (not just professor) since the "Configure AI" panel is
+// shown on both dashboards. Never exposes keys — only call counts.
+app.get('/api/health/ai', verifyToken, checkVITEmail, (req, res) => {
   try {
+    const groq = getGroqUsage();
     const status = getProviderStatus();
-    const activeProvider = status.nim.available ? 'nim' : status.huggingFace.available ? 'huggingface' : 'degraded';
     res.json({
+      groq,
       nim: status.nim,
       huggingFace: status.huggingFace,
-      activeProvider
+      activeProvider: 'groq'
     });
   } catch (error) {
     console.error('AI health check error:', error);
@@ -103,6 +107,8 @@ const eventRoutes = require('./routes/eventRoutes');
 app.use('/api/events', eventRoutes);
 const integrityRoutes = require('./routes/integrityRoutes');
 app.use('/api/integrity', integrityRoutes);
+const aiRoutes = require('./routes/aiRoutes');
+app.use('/api/ai', aiRoutes);
 
 app.use((req, res) => {
   res.status(404).json({

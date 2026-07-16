@@ -1,6 +1,9 @@
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import Logo from '../common/Logo';
+import ConfigureAIModal from '../ai/ConfigureAIModal';
+import { hasStoredAIKey } from '../../lib/aiKeyStorage';
 
 // Icons as simple SVG components
 const HomeIcon = () => (
@@ -50,10 +53,18 @@ const LogoutIcon = () => (
   </svg>
 );
 
+const AIKeyIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3" />
+  </svg>
+);
+
 export default function Sidebar({ role }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { logout, userProfile } = useAuth();
+  const [aiModalOpen, setAiModalOpen] = useState(false);
+  const [aiReady, setAiReady] = useState(hasStoredAIKey());
 
   const handleLogout = async () => {
     await logout();
@@ -105,6 +116,21 @@ export default function Sidebar({ role }) {
         </div>
 
         <button
+          onClick={() => setAiModalOpen(true)}
+          className="sidebar-nav-item relative"
+          title="Configure AI"
+        >
+          <AIKeyIcon />
+          {aiReady && (
+            <span
+              className="absolute top-0 right-0 w-2 h-2 rounded-full"
+              style={{ background: '#34c759' }}
+              title="AI ready"
+            />
+          )}
+        </button>
+
+        <button
           onClick={handleLogout}
           className="sidebar-nav-item"
           title="Logout"
@@ -112,6 +138,12 @@ export default function Sidebar({ role }) {
           <LogoutIcon />
         </button>
       </div>
+
+      <ConfigureAIModal
+        open={aiModalOpen}
+        onClose={() => setAiModalOpen(false)}
+        onStatusChange={setAiReady}
+      />
     </aside>
   );
 }

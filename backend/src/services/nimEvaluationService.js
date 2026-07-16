@@ -76,13 +76,13 @@ function degradedAnalysis(text, criteria) {
 // Single combined call: plagiarism signal + AI-text signal + criteria
 // scoring. Routed through aiProviderService, which transparently tries NIM
 // then HuggingFace and never throws.
-async function analyzeSubmission(text, criteria, otherSubmissions = []) {
+async function analyzeSubmission(text, criteria, otherSubmissions = [], userKey = null, userKeyProvider = null) {
   const prompt = buildPrompt(text, criteria, otherSubmissions);
 
   const result = await aiProviderService.callAI([
     { role: 'system', content: 'You are a rigorous, fair academic integrity and content-quality evaluator. Always return valid JSON only, matching the requested schema exactly. Base every score on evidence in the text provided, never invent details.' },
     { role: 'user', content: prompt }
-  ], { maxTokens: 1500, temperature: 0.2 });
+  ], { maxTokens: 1500, temperature: 0.2, userKey, userKeyProvider });
 
   if (result.degraded) {
     return { analysis: degradedAnalysis(text, criteria), provider: 'degraded', degraded: true };
@@ -105,8 +105,10 @@ function combine(analysis) {
   return { score: final, riskLevel: risk, details, analysis };
 }
 
-async function evaluateSubmission(data) {
-  const { analysis, provider, degraded } = await analyzeSubmission(data.text, data.criteria, data.otherSubmissions || []);
+async function evaluateSubmission(data, cfg = {}) {
+  const { analysis, provider, degraded } = await analyzeSubmission(
+    data.text, data.criteria, data.otherSubmissions || [], cfg.userKey || null, cfg.userKeyProvider || null
+  );
   const plag = combine(analysis);
 
   const pw = data.plagiarismWeightage || 30;

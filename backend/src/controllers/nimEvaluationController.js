@@ -1,5 +1,5 @@
 const { evaluateSubmission, checkNimStatus } = require('../services/nimEvaluationService');
-const { getProviderStatus } = require('../services/aiProviderService');
+const { getProviderStatus, isValidUserKey } = require('../services/aiProviderService');
 const { getDocument, collections, queryDocuments } = require('../services/databaseService');
 
 // Provider-agnostic: evaluateSubmission() routes through aiProviderService,
@@ -9,6 +9,18 @@ async function autoEvaluateWithNim(req, res) {
   try {
     const professorId = req.user.uid;
     const { submissionId } = req.body;
+
+    // BYOK: reject a malformed key outright rather than silently ignoring it.
+    const rawUserKey = req.headers['x-user-ai-key'];
+    let userKey = null;
+    if (rawUserKey) {
+      if (!isValidUserKey('nim', rawUserKey)) {
+        console.log('[AI] user-provided key used: false (rejected — invalid format)');
+        return res.status(400).json({ error: 'Invalid API key format' });
+      }
+      userKey = rawUserKey;
+    }
+    console.log(`[AI] user-provided key used: ${!!userKey}`);
 
     const submission = await getDocument(collections.SUBMISSIONS, submissionId);
     if (!submission) {
@@ -53,7 +65,7 @@ async function autoEvaluateWithNim(req, res) {
       criteriaWeightage: assignment.criteriaWeightage
     };
 
-    const results = await evaluateSubmission(submissionData);
+    const results = await evaluateSubmission(submissionData, { userKey, userKeyProvider: 'nim' });
 
     // Response shape is identical to previous evaluation pipelines — frontend
     // needs no changes.

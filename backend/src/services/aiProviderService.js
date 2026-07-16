@@ -16,6 +16,19 @@ const NIM_BASE_URL = process.env.NVIDIA_NIM_BASE_URL || 'https://integrate.api.n
 const NIM_MODEL = process.env.NVIDIA_NIM_MODEL || 'deepseek-ai/deepseek-v4-flash';
 const HF_MODEL = process.env.HUGGINGFACE_CONTENT_MODEL || 'HuggingFaceH4/zephyr-7b-beta';
 
+// BYOK (Bring Your Own Key) format validation — shared by every controller
+// that accepts an X-User-AI-Key header or the /api/ai/test-key endpoint.
+// Reject anything that doesn't match rather than passing it through.
+const GROQ_KEY_REGEX = /^gsk_[A-Za-z0-9]{50,}$/;
+const NIM_KEY_REGEX = /^nvapi-[A-Za-z0-9_-]{30,}$/;
+
+function isValidUserKey(provider, key) {
+  if (typeof key !== 'string') return false;
+  if (provider === 'groq') return GROQ_KEY_REGEX.test(key);
+  if (provider === 'nim') return NIM_KEY_REGEX.test(key);
+  return false;
+}
+
 function todayKey() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -78,12 +91,13 @@ function resetRateLimits() {
   usage.huggingface = freshWindow();
 }
 
-async function callNimRaw(messages, { maxTokens, temperature }) {
-  if (!process.env.NVIDIA_NIM_API_KEY) throw new Error('NVIDIA_NIM_API_KEY missing');
+async function callNimRaw(messages, { maxTokens, temperature, userKey }) {
+  const key = userKey || process.env.NVIDIA_NIM_API_KEY;
+  if (!key) throw new Error('NVIDIA_NIM_API_KEY missing');
   const client = axios.create({
     baseURL: NIM_BASE_URL,
     headers: {
-      Authorization: `Bearer ${process.env.NVIDIA_NIM_API_KEY}`,
+      Authorization: `Bearer ${key}`,
       'Content-Type': 'application/json'
     },
     timeout: 30000
@@ -96,6 +110,20 @@ async function callNimRaw(messages, { maxTokens, temperature }) {
     stream: false
   });
   return data.choices?.[0]?.message?.content || '';
+}
+
+// Used by POST /api/ai/test-key — never logs or returns the key.
+async function testNimKey(key) {
+  try {
+    await callNimRaw([
+      { role: 'system', content: 'Reply with only the word OK.' },
+      { role: 'user', content: 'ping' }
+    ], { maxTokens: 1, temperature: 0, userKey: key });
+    return true;
+  } catch (err) {
+    console.error(`[AI] NIM test-key check failed (${err.response?.status || err.message})`);
+    return false;
+  }
 }
 
 async function callHfRaw(messages, { maxTokens, temperature }) {
@@ -118,7 +146,21 @@ async function callHfRaw(messages, { maxTokens, temperature }) {
  * never forward err.message/stack to an HTTP response.
  */
 async function callAI(messages, options = {}) {
-  const { maxTokens = 800, temperature = 0.2 } = options;
+  const { maxTokens = 800, temperature = 0.2, userKey = null, userKeyProvider = null } = options;
+
+  // BYOK: a validated user-supplied key bypasses our rate limiting entirely
+  // (it's their quota, not ours) and is used for this call only — nothing is
+  // stored or logged beyond a boolean.
+  if (userKey && userKeyProvider === 'nim') {
+    console.log('[AI] user-provided key used: true (nim)');
+    try {
+      const content = await callNimRaw(messages, { maxTokens, temperature, userKey });
+      return { content, provider: 'nim', degraded: false, userKeyUsed: true };
+    } catch (err) {
+      console.error(`[AI] NIM call with user-provided key failed (${err.response?.status || err.message})`);
+      return { content: null, provider: 'degraded', degraded: true, reason: 'user_key_failed' };
+    }
+  }
 
   if (canCall('nim', NIM_LIMIT_PER_MIN)) {
     recordCall('nim');
@@ -152,6 +194,10 @@ module.exports = {
   callAI,
   getProviderStatus,
   resetRateLimits,
+  isValidUserKey,
+  testNimKey,
+  GROQ_KEY_REGEX,
+  NIM_KEY_REGEX,
   NIM_LIMIT_PER_MIN,
   HF_LIMIT_PER_MIN
 };

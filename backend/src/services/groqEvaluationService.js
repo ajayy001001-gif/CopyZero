@@ -40,12 +40,13 @@ function getGroqUsage() {
   };
 }
 
-function getGroqClient() {
-  if (!process.env.GROQ_API_KEY) throw new Error('GROQ_API_KEY missing');
+function getGroqClient(apiKey) {
+  const key = apiKey || process.env.GROQ_API_KEY;
+  if (!key) throw new Error('GROQ_API_KEY missing');
   return axios.create({
     baseURL: GROQ_BASE_URL,
     headers: {
-      Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+      Authorization: `Bearer ${key}`,
       'Content-Type': 'application/json'
     },
     timeout: 30000
@@ -55,18 +56,24 @@ function getGroqClient() {
 // Kept deliberately small — this runs on Groq's free tier, so every call here
 // counts against a shared daily/per-minute quota. Trim prompt size and cap
 // output tokens rather than reaching for a bigger context.
-async function callGroq(messages, { maxTokens = 800, temperature = 0.2 } = {}) {
-  rollWindow();
-  if (usage.totalToday >= GROQ_DAILY_CALL_CAP) {
-    throw new Error('GROQ_QUOTA_EXCEEDED: daily call cap reached');
+//
+// BYOK: when userKey is supplied (already format-validated by the caller),
+// it's used for this call only and the site-wide quota guard is skipped
+// entirely — it's the caller's own Groq quota, not the platform's.
+async function callGroq(messages, { maxTokens = 800, temperature = 0.2, userKey = null } = {}) {
+  if (!userKey) {
+    rollWindow();
+    if (usage.totalToday >= GROQ_DAILY_CALL_CAP) {
+      throw new Error('GROQ_QUOTA_EXCEEDED: daily call cap reached');
+    }
+    if (usage.callCount >= GROQ_LIMIT_PER_MIN) {
+      throw new Error('GROQ_QUOTA_EXCEEDED: per-minute limit reached');
+    }
+    usage.callCount += 1;
+    usage.totalToday += 1;
   }
-  if (usage.callCount >= GROQ_LIMIT_PER_MIN) {
-    throw new Error('GROQ_QUOTA_EXCEEDED: per-minute limit reached');
-  }
-  usage.callCount += 1;
-  usage.totalToday += 1;
 
-  const client = getGroqClient();
+  const client = getGroqClient(userKey);
   const { data } = await client.post('/chat/completions', {
     model: GROQ_MODEL,
     messages,
@@ -75,6 +82,20 @@ async function callGroq(messages, { maxTokens = 800, temperature = 0.2 } = {}) {
     stream: false
   });
   return data.choices?.[0]?.message?.content || '';
+}
+
+// Used by POST /api/ai/test-key — never logs or returns the key itself.
+async function testGroqKey(key) {
+  try {
+    await callGroq([
+      { role: 'system', content: 'Reply with only the word OK.' },
+      { role: 'user', content: 'ping' }
+    ], { maxTokens: 1, temperature: 0, userKey: key });
+    return true;
+  } catch (err) {
+    console.error(`[AI] Groq test-key check failed (${err.response?.status || err.message})`);
+    return false;
+  }
 }
 
 function extractJson(text) {
@@ -86,7 +107,7 @@ function extractJson(text) {
 // Single combined call: plagiarism signal + AI-text signal + criteria scoring.
 // Submission text and comparison set are both truncated to keep token usage
 // (and therefore quota burn) low.
-async function analyzeSubmission(text, criteria, otherSubmissions = []) {
+async function analyzeSubmission(text, criteria, otherSubmissions = [], userKey = null) {
   const criteriaList = criteria
     .map((c, i) => `${i + 1}. ${c.name} (${c.maxPoints}pts)${c.description ? ': ' + c.description : ''}`)
     .join('\n');
@@ -129,7 +150,7 @@ Return ONLY a JSON object, no markdown fences, no commentary, in exactly this sh
   const raw = await callGroq([
     { role: 'system', content: 'You are a rigorous, fair academic integrity and content-quality evaluator. Always return valid JSON only, matching the requested schema exactly. Base every score on evidence in the text provided, never invent details.' },
     { role: 'user', content: userPrompt }
-  ]);
+  ], { userKey });
 
   return extractJson(raw);
 }
@@ -142,7 +163,7 @@ function combine(analysis) {
 }
 
 async function evaluateSubmissionWithGroq(data, cfg = {}) {
-  const analysis = await analyzeSubmission(data.text, data.criteria, data.otherSubmissions || []);
+  const analysis = await analyzeSubmission(data.text, data.criteria, data.otherSubmissions || [], cfg.userKey || null);
   const plag = combine(analysis);
 
   const pw = data.plagiarismWeightage || 30;
@@ -174,6 +195,7 @@ async function evaluateSubmissionWithGroq(data, cfg = {}) {
     breakdown,
     timestamp: new Date().toISOString(),
     usingGroq: true,
+    usingUserKey: !!cfg.userKey,
     model: GROQ_MODEL
   };
 
@@ -207,4 +229,4 @@ async function checkGroqStatus() {
   }
 }
 
-module.exports = { evaluateSubmissionWithGroq, checkGroqStatus, callGroq, getGroqUsage, GROQ_MODEL };
+module.exports = { evaluateSubmissionWithGroq, checkGroqStatus, callGroq, testGroqKey, getGroqUsage, GROQ_MODEL };

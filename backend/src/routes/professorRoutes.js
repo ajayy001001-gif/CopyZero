@@ -12,6 +12,7 @@ const groqEvaluationController = require('../controllers/groqEvaluationControlle
 // ollamaEvaluationController, for a possible future follow-up.
 
 const { verifyToken, checkVITEmail, checkRole } = require('../middleware/auth');
+const { isValidUserKey } = require('../services/aiProviderService');
 
 // Groq's free tier has a limited request rate — keep AI evaluation usage
 // light and cap it well below that ceiling regardless of how many
@@ -20,12 +21,15 @@ const { verifyToken, checkVITEmail, checkRole } = require('../middleware/auth');
 // deliberately tight since this is a hosted site with shared credits — see
 // GROQ_LIMIT_PER_MIN / GROQ_DAILY_CALL_CAP in groqEvaluationService.js for
 // the site-wide cap underneath this per-user one.
+// BYOK requests (a valid X-User-AI-Key header) skip this limiter entirely —
+// it's the professor's own Groq quota being spent, not the platform's.
 const aiEvaluateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 10,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => req.user?.uid || ipKeyGenerator(req.ip),
+  skip: (req) => isValidUserKey('groq', req.headers['x-user-ai-key']),
   message: { error: 'AI evaluation limit reached, please wait a few minutes and try again' }
 });
 
