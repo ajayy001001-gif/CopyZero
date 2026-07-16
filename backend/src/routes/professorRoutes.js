@@ -6,6 +6,8 @@ const rubricController = require('../controllers/rubricController');
 const evaluationController = require('../controllers/evaluationController');
 const groqEvaluationController = require('../controllers/groqEvaluationController');
 const codingQuestionController = require('../controllers/codingQuestionController');
+const assessmentController = require('../controllers/assessmentController');
+const questionGeneratorController = require('../controllers/questionGeneratorController');
 // NOTE: AI evaluation is BYOK-only (Groq, llama-3.1-8b-instant) — there is
 // no platform-funded key. Every request must supply its own valid
 // X-User-AI-Key header or the controller rejects it before any AI call.
@@ -24,6 +26,18 @@ const aiEvaluateLimiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: (req) => req.user?.uid || ipKeyGenerator(req.ip),
   message: { error: 'Too many evaluation requests, please wait a few minutes and try again' }
+});
+
+// AI question generation is expensive (long prompts, multiple retries) and
+// can spend the platform Groq quota — cap at 8 per professor per hour.
+// In-memory (default MemoryStore), keyed by professorId.
+const generateQuestionsLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.user?.uid || ipKeyGenerator(req.ip),
+  message: { error: 'Generation limit reached (8/hour). Please try again later.' }
 });
 
 // ── Assignment routes ──────────────────────────────────────────────────────────
@@ -85,6 +99,32 @@ router.get('/scores/assignment/:assignmentId',
 router.post('/coding-questions',
   verifyToken, checkVITEmail, checkRole(['professor']),
   codingQuestionController.createCodingQuestion);
+
+// ── Assessment routes (MCQ + coding, separate entity from Assignments) ──────────
+router.post('/assessments',
+  verifyToken, checkVITEmail, checkRole(['professor']),
+  assessmentController.createAssessment);
+
+router.get('/assessments',
+  verifyToken, checkVITEmail, checkRole(['professor']),
+  assessmentController.getAssessmentsByProfessor);
+
+router.get('/assessments/:id',
+  verifyToken, checkVITEmail, checkRole(['professor']),
+  assessmentController.getAssessmentById);
+
+router.put('/assessments/:id',
+  verifyToken, checkVITEmail, checkRole(['professor']),
+  assessmentController.updateAssessment);
+
+router.post('/assessments/:id/publish',
+  verifyToken, checkVITEmail, checkRole(['professor']),
+  assessmentController.publishAssessment);
+
+// ── AI question generation (Groq → NIM/HF fallback, review-only) ─────────────────
+router.post('/generate-assessment-questions',
+  verifyToken, checkVITEmail, checkRole(['professor']), generateQuestionsLimiter,
+  questionGeneratorController.generateAssessmentQuestions);
 
 // ── AI evaluation routes (powered by Groq internally) ───────────────────────────
 // Route paths kept the same so frontend needs no changes

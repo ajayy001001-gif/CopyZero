@@ -59,6 +59,17 @@ export const professorAPI = {
   checkOllamaHealth: () => api.get('/api/professor/ollama-health'),
 
   createCodingQuestion: (data) => api.post('/api/professor/coding-questions', data),
+
+  // Assessments — separate entity from Assignments, MCQ + coding, own flow.
+  createAssessment: (data) => api.post('/api/professor/assessments', data),
+  getAssessments: () => api.get('/api/professor/assessments'),
+  getAssessmentById: (id) => api.get(`/api/professor/assessments/${id}`),
+  updateAssessment: (id, data) => api.put(`/api/professor/assessments/${id}`, data),
+  publishAssessment: (id) => api.post(`/api/professor/assessments/${id}/publish`),
+
+  // BYOK header attached so generation uses the professor's own Groq key if
+  // configured — falls back to platform key / NIM server-side if absent.
+  generateAssessmentQuestions: (data) => api.post('/api/professor/generate-assessment-questions', data, { headers: getUserAIKeyHeader() }),
 };
 
 export const proctorAPI = {
@@ -87,6 +98,16 @@ export const studentAPI = {
 
   getCodingQuestions: (assignmentId) => api.get(`/api/student/coding-questions/${assignmentId}`),
   submitCode: (data) => api.post('/api/student/submit-code', data),
+
+  // Assessments
+  joinAssessment: (code) => api.post('/api/student/assessments/join', { code }),
+  getAssessments: () => api.get('/api/student/assessments'),
+  startAssessment: (id) => api.post(`/api/student/assessments/${id}/start`),
+  getFullQuestionsForSubmit: (id) => api.get(`/api/student/assessments/${id}/full-questions`),
+  // BYOK header attached so the coding-answer plausibility check (and the
+  // session's integrity score) can use the student's own key if configured
+  // — optional, submission still works and grades correctly without one.
+  submitAssessment: (id, data) => api.post(`/api/student/assessments/${id}/submit`, data, { headers: getUserAIKeyHeader() }),
 };
 
 export const aiAPI = {

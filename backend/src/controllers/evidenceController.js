@@ -84,17 +84,24 @@ async function getEvidenceForEvent(req, res) {
     }
     const event = eventDoc.data();
 
-    const submission = await getDocument(collections.SUBMISSIONS, event.submissionId);
-    if (!submission) {
-      return res.status(404).json({ error: 'Submission not found' });
+    // event.contextType is undefined on events predating the assessment
+    // feature — those fall through to the original assignment-only path
+    // unchanged.
+    let parent;
+    if (event.contextType === 'assessment') {
+      parent = await getDocument(collections.ASSESSMENTS, event.assessmentId);
+    } else {
+      const submission = await getDocument(collections.SUBMISSIONS, event.submissionId);
+      if (!submission) {
+        return res.status(404).json({ error: 'Submission not found' });
+      }
+      parent = await getDocument(collections.ASSIGNMENTS, submission.assignmentId);
     }
-
-    const assignment = await getDocument(collections.ASSIGNMENTS, submission.assignmentId);
-    if (!assignment) {
-      return res.status(404).json({ error: 'Assignment not found' });
+    if (!parent) {
+      return res.status(404).json({ error: 'Assignment or assessment not found' });
     }
-    if (assignment.professorId !== professorId) {
-      return res.status(403).json({ error: 'You can only view evidence for your own assignments' });
+    if (parent.professorId !== professorId) {
+      return res.status(403).json({ error: 'You can only view evidence for your own assignments or assessments' });
     }
 
     const clips = await queryDocuments(collections.EVIDENCE_CLIPS, [

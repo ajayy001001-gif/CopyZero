@@ -30,13 +30,19 @@ function isValidTimestamp(value) {
 }
 
 // POST /api/events/batch — student only. studentId always comes from
-// req.user (never req.body). assignmentId is always derived server-side from
-// the submission record (never trusted from the body) so a student can't
-// attach events to someone else's timeline.
+// req.user (never req.body). assignmentId/assessmentId is always derived
+// server-side from the submission record (never trusted from the body) so a
+// student can't attach events to someone else's timeline.
+//
+// contextType ('assignment'|'assessment') is optional and defaults to
+// 'assignment' — every existing caller (useBehavioralTracker/useProctoring
+// on the assignment flow) omits it, so this preserves their exact prior
+// behavior unchanged; only assessment callers pass it explicitly.
 async function batchEvents(req, res) {
   try {
     const studentId = req.user.uid;
-    const { submissionId, events } = req.body;
+    const { submissionId, events, contextType } = req.body;
+    const type = contextType === 'assessment' ? 'assessment' : 'assignment';
 
     if (!submissionId || typeof submissionId !== 'string') {
       return res.status(400).json({ error: 'submissionId is required' });
@@ -48,11 +54,13 @@ async function batchEvents(req, res) {
       return res.status(400).json({ error: `Batch too large — max ${MAX_BATCH_SIZE} events per call` });
     }
 
-    const submission = await getDocument(collections.SUBMISSIONS, submissionId);
-    if (!submission) {
+    const parentSubmission = type === 'assessment'
+      ? await getDocument(collections.ASSESSMENT_SUBMISSIONS, submissionId)
+      : await getDocument(collections.SUBMISSIONS, submissionId);
+    if (!parentSubmission) {
       return res.status(404).json({ error: 'Submission not found' });
     }
-    if (submission.studentId !== studentId) {
+    if (parentSubmission.studentId !== studentId) {
       return res.status(403).json({ error: 'You can only log events for your own submission' });
     }
 
@@ -72,7 +80,9 @@ async function batchEvents(req, res) {
       eventIds.push(docRef.id);
       batch.set(docRef, {
         studentId,
-        assignmentId: submission.assignmentId,
+        contextType: type,
+        assignmentId: type === 'assignment' ? parentSubmission.assignmentId : null,
+        assessmentId: type === 'assessment' ? parentSubmission.assessmentId : null,
         submissionId,
         eventType: evt.eventType,
         timestamp: isValidTimestamp(evt.timestamp) ? evt.timestamp : now,
@@ -94,7 +104,9 @@ async function batchEvents(req, res) {
 }
 
 // GET /api/events/:submissionId — professor only, ownership-checked via the
-// submission's assignment. Cursor-based pagination, max 100 per page.
+// parent assignment or assessment. Cursor-based pagination, max 100 per page.
+// Tries the assignment-submission lookup first (existing, most common path,
+// unchanged), falls back to assessment-submission only if that misses.
 async function getEventTimeline(req, res) {
   try {
     const professorId = req.user.uid;
@@ -102,17 +114,23 @@ async function getEventTimeline(req, res) {
     const { cursor } = req.query;
     const PAGE_SIZE = 100;
 
-    const submission = await getDocument(collections.SUBMISSIONS, submissionId);
-    if (!submission) {
-      return res.status(404).json({ error: 'Submission not found' });
+    let parent;
+    const assignmentSubmission = await getDocument(collections.SUBMISSIONS, submissionId);
+    if (assignmentSubmission) {
+      parent = await getDocument(collections.ASSIGNMENTS, assignmentSubmission.assignmentId);
+    } else {
+      const assessmentSubmission = await getDocument(collections.ASSESSMENT_SUBMISSIONS, submissionId);
+      if (!assessmentSubmission) {
+        return res.status(404).json({ error: 'Submission not found' });
+      }
+      parent = await getDocument(collections.ASSESSMENTS, assessmentSubmission.assessmentId);
     }
 
-    const assignment = await getDocument(collections.ASSIGNMENTS, submission.assignmentId);
-    if (!assignment) {
-      return res.status(404).json({ error: 'Assignment not found' });
+    if (!parent) {
+      return res.status(404).json({ error: 'Assignment or assessment not found' });
     }
-    if (assignment.professorId !== professorId) {
-      return res.status(403).json({ error: 'You can only view events for your own assignments' });
+    if (parent.professorId !== professorId) {
+      return res.status(403).json({ error: 'You can only view events for your own assignments or assessments' });
     }
 
     let query = db.collection(collections.EVENTS)

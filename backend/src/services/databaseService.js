@@ -13,7 +13,9 @@ const collections = {
   INTEGRITY_SCORES: 'integrityScores',
   ENROLLMENTS: 'enrollments',
   CODING_QUESTIONS: 'codingQuestions',
-  EVIDENCE_CLIPS: 'evidenceClips'
+  EVIDENCE_CLIPS: 'evidenceClips',
+  ASSESSMENTS: 'assessments',
+  ASSESSMENT_SUBMISSIONS: 'assessmentSubmissions'
 };
 
 async function createDocument(collectionName, data, customId = null) {

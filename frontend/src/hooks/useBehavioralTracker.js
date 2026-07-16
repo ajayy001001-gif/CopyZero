@@ -19,8 +19,12 @@ function truncate(value) {
  * isExamActive is true. Events are held locally (never lost) until a
  * submissionId is known, since the backend ties every event to a specific
  * submission for ownership checks.
+ *
+ * contextType: 'assignment' (default) | 'assessment' — tells the backend
+ * which submission collection owns submissionId. Every existing caller
+ * omits this and gets the original assignment behavior unchanged.
  */
-export default function useBehavioralTracker({ isExamActive, submissionId, assignmentId }) {
+export default function useBehavioralTracker({ isExamActive, submissionId, assignmentId, contextType = 'assignment' }) {
   const queueRef = useRef([]);
   const submissionIdRef = useRef(submissionId);
   const mouseLeftAtRef = useRef(null);
@@ -48,7 +52,8 @@ export default function useBehavioralTracker({ isExamActive, submissionId, assig
     try {
       await api.post('/api/events/batch', {
         submissionId: submissionIdRef.current,
-        events: batch
+        events: batch,
+        contextType
       });
       queueRef.current = queueRef.current.slice(batch.length);
     } catch {
@@ -56,7 +61,7 @@ export default function useBehavioralTracker({ isExamActive, submissionId, assig
     } finally {
       flushingRef.current = false;
     }
-  }, []);
+  }, [contextType]);
 
   // Call on exam submit, with the freshly-created submissionId if the caller
   // only just received it, to drain any events queued during composition.

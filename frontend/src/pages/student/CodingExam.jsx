@@ -32,7 +32,7 @@ export default function CodingExam() {
     assignmentId
   });
   const {
-    webcamStatus, screenStatus, blockedReason,
+    webcamStatus, screenStatus, blockedReason, webcamNotice,
     onSuspiciousBehavior, flushNow: flushProctoring
   } = useProctoring({ isExamActive: examStarted });
 
@@ -208,6 +208,21 @@ export default function CodingExam() {
   }
 
   const isBlocked = webcamStatus === 'denied' || screenStatus === 'denied';
+  const webcamLoading = webcamStatus === 'requesting' || webcamStatus === 'loading_model';
+  const webcamLabel = {
+    requesting: 'requesting access',
+    loading_model: 'preparing...',
+    monitoring: 'monitoring',
+    unavailable: 'unavailable',
+    denied: 'denied'
+  }[webcamStatus] || webcamStatus;
+  const webcamDotColor = webcamStatus === 'monitoring'
+    ? '#34c759'
+    : webcamStatus === 'unavailable'
+      ? '#ff9500'
+      : webcamLoading
+        ? '#8e8e93'
+        : '#ff3b30';
 
   return (
     <div className="min-h-screen bg-black flex">
@@ -217,8 +232,8 @@ export default function CodingExam() {
           {/* Persistent proctoring indicators — transparency, not just UX */}
           <div className="flex items-center gap-4 mb-6 text-xs text-[var(--color-text-tertiary)]">
             <span className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full" style={{ background: webcamStatus === 'monitoring' ? '#34c759' : '#ff3b30' }} />
-              Webcam: {webcamStatus === 'monitoring' ? 'monitoring' : webcamStatus}
+              <span className="w-2 h-2 rounded-full" style={{ background: webcamDotColor }} />
+              Webcam: {webcamLabel}
             </span>
             <span className="flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full" style={{ background: screenStatus === 'sharing' ? '#34c759' : '#ff3b30' }} />
@@ -229,6 +244,12 @@ export default function CodingExam() {
           {isBlocked && (
             <div className="card mb-6 text-center" style={{ borderColor: 'var(--color-accent-error)' }}>
               <p style={{ color: 'var(--color-accent-error)' }}>{blockedReason}</p>
+            </div>
+          )}
+
+          {!isBlocked && webcamNotice && (
+            <div className="card mb-6 text-center" style={{ borderColor: '#ff9500' }}>
+              <p style={{ color: '#ff9500' }}>{webcamNotice}</p>
             </div>
           )}
 

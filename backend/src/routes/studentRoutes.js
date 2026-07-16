@@ -8,6 +8,8 @@ const studentScoreController = require('../controllers/studentScoreController');
 const enrollmentController = require('../controllers/enrollmentController');
 const codingQuestionController = require('../controllers/codingQuestionController');
 const codeSubmissionController = require('../controllers/codeSubmissionController');
+const assessmentController = require('../controllers/assessmentController');
+const assessmentSubmissionController = require('../controllers/assessmentSubmissionController');
 
 // NEW: Import HuggingFace controller for viewing evaluations
 const hfEvaluationController = require('../controllers/huggingFaceEvaluationController');
@@ -25,8 +27,26 @@ const joinLimiter = rateLimit({
   message: { error: 'Too many join attempts, please try again in an hour' }
 });
 
+// Prevents a student from hammering start/submit repeatedly — normal use is
+// at most a couple of calls per assessment attempt.
+const assessmentAttemptLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.user?.uid || ipKeyGenerator(req.ip),
+  message: { error: 'Too many attempts, please wait a few minutes and try again' }
+});
+
 // Enrollment routes
 router.post('/join', verifyToken, checkVITEmail, checkRole(['student']), joinLimiter, enrollmentController.joinAssignment);
+
+// ── Assessment routes (MCQ + coding, separate entity/flow from Assignments) ─────
+router.post('/assessments/join', verifyToken, checkVITEmail, checkRole(['student']), joinLimiter, enrollmentController.joinAssessment);
+router.get('/assessments', verifyToken, checkVITEmail, checkRole(['student']), assessmentController.getAssessmentsForStudent);
+router.post('/assessments/:id/start', verifyToken, checkVITEmail, checkRole(['student']), assessmentAttemptLimiter, assessmentSubmissionController.startAssessment);
+router.get('/assessments/:id/full-questions', verifyToken, checkVITEmail, checkRole(['student']), assessmentAttemptLimiter, assessmentSubmissionController.getFullQuestionsForSubmit);
+router.post('/assessments/:id/submit', verifyToken, checkVITEmail, checkRole(['student']), assessmentAttemptLimiter, assessmentSubmissionController.submitAssessment);
 
 // Assignment routes
 router.get('/assignments', verifyToken, checkVITEmail, checkRole(['student']), assignmentController.getAllAssignments);

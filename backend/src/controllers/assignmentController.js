@@ -120,7 +120,12 @@ async function getAllAssignments(req, res) {
       return res.status(200).json({ count: 0, assignments: [] });
     }
 
-    const enrolledAssignmentIds = new Set(enrollments.map(e => e.assignmentId));
+    // The enrollments collection is shared with assessments, so some rows
+    // carry assessmentId and no assignmentId — filter those out before
+    // looking up assignment docs (an undefined id crashes getDocument).
+    const enrolledAssignmentIds = new Set(
+      enrollments.map(e => e.assignmentId).filter(Boolean)
+    );
     const assignmentDocs = await Promise.all(
       [...enrolledAssignmentIds].map(id => getDocument(collections.ASSIGNMENTS, id))
     );

@@ -25,11 +25,21 @@ const allowedOrigins = [...new Set([
     .filter(Boolean),
 ])];
 
+// In local dev, Vite may fall back to a different port (5174, 5175, …) when
+// its default is already taken, which would otherwise break CORS on every
+// shift. Outside production, accept any localhost/127.0.0.1 origin. In
+// production only the explicit allowlist applies.
+const isProduction = process.env.NODE_ENV === 'production';
+const LOCALHOST_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+
 app.use(cors({
   origin(origin, callback) {
     // Allow same-origin/non-browser requests (no Origin header) and any
     // explicitly allowlisted frontend origin.
     if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    if (!isProduction && LOCALHOST_ORIGIN.test(origin)) {
       return callback(null, true);
     }
     return callback(new Error('Not allowed by CORS'));
@@ -39,11 +49,17 @@ app.use(cors({
 
 app.use(helmet());
 
+// 20/15min is the right brute-force protection for production login, but it's
+// far too tight for local dev where you log in/out across several test
+// accounts and React re-fetches the profile on every reload. Disable it
+// outside production; the generalLimiter (300/15min) still guards against
+// runaway request loops.
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 20,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: () => !isProduction,
   message: { error: 'Too many requests, please try again later' }
 });
 

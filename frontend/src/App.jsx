@@ -12,6 +12,7 @@ import CreateAssignment from './pages/professor/CreateAssignment';
 import AssignmentDetails from './pages/professor/AssignmentDetails';
 import Submissions from './pages/professor/Submissions';
 import EvaluateSubmission from './pages/professor/EvaluateSubmission';
+import AssessmentBuilder from './pages/professor/AssessmentBuilder';
 
 // Student Pages
 import StudentDashboard from './pages/student/Dashboard';
@@ -19,6 +20,10 @@ import SubmitAssignment from './pages/student/SubmitAssignment';
 import CodingExam from './pages/student/CodingExam';
 import ViewSubmission from './pages/student/ViewSubmission';
 import Scores from './pages/student/Scores';
+import TakeAssessment from './pages/student/TakeAssessment';
+
+// Dev-only diagnostic page
+import FaceDetectionTest from './pages/dev/FaceDetectionTest';
 
 function App() {
   return (
@@ -71,6 +76,14 @@ function App() {
               </ProtectedRoute>
             }
           />
+          <Route
+            path="/professor/assessments/:id"
+            element={
+              <ProtectedRoute allowedRoles={['professor']}>
+                <AssessmentBuilder />
+              </ProtectedRoute>
+            }
+          />
 
           {/* Student Routes */}
           <Route
@@ -113,6 +126,17 @@ function App() {
               </ProtectedRoute>
             }
           />
+          <Route
+            path="/student/assessments/:id"
+            element={
+              <ProtectedRoute allowedRoles={['student']}>
+                <TakeAssessment />
+              </ProtectedRoute>
+            }
+          />
+          {/* Dev-only: face detection diagnostic, unauthenticated */}
+          <Route path="/dev/face-test" element={<FaceDetectionTest />} />
+
           {/* Unauthorized */}
           <Route
             path="/unauthorized"

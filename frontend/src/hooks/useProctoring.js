@@ -6,16 +6,55 @@ const NO_FACE_CONSECUTIVE_THRESHOLD = 3; // 3 * 5s = 15s
 const SCREEN_SEGMENT_MS = 15000;
 const MAX_SEGMENTS_KEPT = 2;
 const MAX_EVIDENCE_BYTES = 500 * 1024;
-const MODEL_URL = '/models'; // see frontend/public/models/README.md for setup
+
+const LOCAL_MODEL_URL = '/models'; // see frontend/public/models/README.md for setup
+const CDN_FALLBACK_URL = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js/weights';
+
+// Module-level cache — the model (local file or CDN fallback) loads at most
+// once per page load, regardless of how many times an exam page mounts.
+let faceModelLoadPromise = null;
+
+function loadFaceDetectionModel() {
+  if (faceModelLoadPromise) return faceModelLoadPromise;
+
+  faceModelLoadPromise = (async () => {
+    const faceapi = await import('face-api.js');
+    try {
+      await faceapi.nets.tinyFaceDetector.loadFromUri(LOCAL_MODEL_URL);
+      console.log('[proctoring] face model loaded from local files');
+    } catch (localErr) {
+      console.warn('[proctoring] local model load failed, trying CDN fallback', localErr);
+      try {
+        await faceapi.nets.tinyFaceDetector.loadFromUri(CDN_FALLBACK_URL);
+        console.log('[proctoring] face model loaded from CDN fallback');
+      } catch (cdnErr) {
+        console.error('[proctoring] face model failed to load from both sources', cdnErr);
+        throw new Error('Face detection unavailable — proctoring will run without webcam checks');
+      }
+    }
+    return faceapi;
+  })();
+
+  return faceModelLoadPromise;
+}
 
 // Presence/count detection only — no facial recognition or identity
 // matching across the exam. Scope is intentionally limited to "is a face
 // visible, and how many" to avoid the complexity/false-positive risk of
 // re-identification.
-export default function useProctoring({ isExamActive }) {
-  const [webcamStatus, setWebcamStatus] = useState('idle'); // idle|requesting|granted|denied|monitoring
+//
+// contextType: 'assignment' (default) | 'assessment' — same meaning as in
+// useBehavioralTracker; tells the backend which submission collection owns
+// the submissionId passed to flushNow(). Session-level: this hook is meant
+// to be started once (assignment exam OR assessment session) and run
+// continuously until submit, regardless of which "section" (MCQ vs coding)
+// the caller is in — callers should not remount it between sections.
+export default function useProctoring({ isExamActive, contextType = 'assignment' }) {
+  // idle|requesting|loading_model|granted|denied|monitoring|unavailable
+  const [webcamStatus, setWebcamStatus] = useState('idle');
   const [screenStatus, setScreenStatus] = useState('idle');
   const [blockedReason, setBlockedReason] = useState(null);
+  const [webcamNotice, setWebcamNotice] = useState(null); // non-blocking, e.g. "Webcam monitoring unavailable this session"
 
   const videoRef = useRef(null);
   const webcamStreamRef = useRef(null);
@@ -64,61 +103,77 @@ export default function useProctoring({ isExamActive }) {
 
     async function startWebcam() {
       setWebcamStatus('requesting');
+      let stream;
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
-        webcamStreamRef.current = stream;
-
-        const video = document.createElement('video');
-        video.srcObject = stream;
-        video.muted = true;
-        video.playsInline = true;
-        await video.play();
-        videoRef.current = video;
-
-        const faceapi = await import('face-api.js');
-        faceApiRef.current = faceapi;
-        await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
-
-        if (cancelled) return;
-        setWebcamStatus('monitoring');
-
-        // Reference snapshot at exam start — presence record only, not used
-        // for any re-identification/matching later. useBehavioralTracker
-        // already emits its own 'exam_start' event; this is a second,
-        // proctoring-specific one carrying the snapshot as evidence.
-        const refSnapshot = captureWebcamSnapshot();
-        if (refSnapshot) {
-          pushProctoringEvent('exam_start', { type: 'webcam_snapshot', blob: dataUrlToBlob(refSnapshot), mimeType: 'image/jpeg' });
-        }
-
-        intervalId = setInterval(async () => {
-          if (!videoRef.current || !faceApiRef.current) return;
-          const detections = await faceApiRef.current.detectAllFaces(
-            videoRef.current,
-            new faceApiRef.current.TinyFaceDetectorOptions()
-          );
-          if (detections.length === 0) {
-            noFaceStreakRef.current += 1;
-            if (noFaceStreakRef.current === NO_FACE_CONSECUTIVE_THRESHOLD) {
-              const snap = captureWebcamSnapshot();
-              pushProctoringEvent('webcam_no_face', snap ? { type: 'webcam_snapshot', blob: dataUrlToBlob(snap), mimeType: 'image/jpeg' } : null);
-              noFaceStreakRef.current = 0;
-            }
-          } else {
-            noFaceStreakRef.current = 0;
-            if (detections.length > 1) {
-              const snap = captureWebcamSnapshot();
-              pushProctoringEvent('webcam_multiple_faces', snap ? { type: 'webcam_snapshot', blob: dataUrlToBlob(snap), mimeType: 'image/jpeg' } : null);
-            }
-          }
-        }, FACE_CHECK_INTERVAL_MS);
-
-      } catch (err) {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      } catch {
         if (cancelled) return;
         setWebcamStatus('denied');
         setBlockedReason('Webcam access is required for this exam. Please grant permission and reload.');
+        return;
       }
+      if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
+      webcamStreamRef.current = stream;
+
+      const video = document.createElement('video');
+      video.srcObject = stream;
+      video.muted = true;
+      video.playsInline = true;
+      await video.play();
+      videoRef.current = video;
+
+      // Camera permission is granted at this point regardless of what
+      // happens next — face detection itself is a best-effort enhancement,
+      // never a reason to block the exam.
+      setWebcamStatus('loading_model');
+
+      let faceapi;
+      try {
+        faceapi = await loadFaceDetectionModel();
+      } catch (modelErr) {
+        if (cancelled) return;
+        console.error('[proctoring] webcam monitoring disabled:', modelErr.message);
+        setWebcamStatus('unavailable');
+        setWebcamNotice('Webcam monitoring unavailable this session — screen and activity monitoring are still active.');
+        // No point holding the camera open if we can't do anything with it.
+        stream.getTracks().forEach(t => t.stop());
+        webcamStreamRef.current = null;
+        return;
+      }
+      if (cancelled) return;
+      faceApiRef.current = faceapi;
+      setWebcamStatus('monitoring');
+
+      // Reference snapshot at exam start — presence record only, not used
+      // for any re-identification/matching later. useBehavioralTracker
+      // already emits its own 'exam_start' event; this is a second,
+      // proctoring-specific one carrying the snapshot as evidence.
+      const refSnapshot = captureWebcamSnapshot();
+      if (refSnapshot) {
+        pushProctoringEvent('exam_start', { type: 'webcam_snapshot', blob: dataUrlToBlob(refSnapshot), mimeType: 'image/jpeg' });
+      }
+
+      intervalId = setInterval(async () => {
+        if (!videoRef.current || !faceApiRef.current) return;
+        const detections = await faceApiRef.current.detectAllFaces(
+          videoRef.current,
+          new faceApiRef.current.TinyFaceDetectorOptions()
+        );
+        if (detections.length === 0) {
+          noFaceStreakRef.current += 1;
+          if (noFaceStreakRef.current === NO_FACE_CONSECUTIVE_THRESHOLD) {
+            const snap = captureWebcamSnapshot();
+            pushProctoringEvent('webcam_no_face', snap ? { type: 'webcam_snapshot', blob: dataUrlToBlob(snap), mimeType: 'image/jpeg' } : null);
+            noFaceStreakRef.current = 0;
+          }
+        } else {
+          noFaceStreakRef.current = 0;
+          if (detections.length > 1) {
+            const snap = captureWebcamSnapshot();
+            pushProctoringEvent('webcam_multiple_faces', snap ? { type: 'webcam_snapshot', blob: dataUrlToBlob(snap), mimeType: 'image/jpeg' } : null);
+          }
+        }
+      }, FACE_CHECK_INTERVAL_MS);
     }
 
     startWebcam();
@@ -135,6 +190,7 @@ export default function useProctoring({ isExamActive }) {
   }, [isExamActive]);
 
   // ── Screen: getDisplayMedia + MediaRecorder rolling buffer ─────────────
+  // Entirely independent of face-api.js — unaffected by webcam/model status.
   useEffect(() => {
     if (!isExamActive) return;
     let cancelled = false;
@@ -219,7 +275,8 @@ export default function useProctoring({ isExamActive }) {
       try {
         const { data } = await api.post('/api/events/batch', {
           submissionId,
-          events: [{ eventType: item.eventType, timestamp: item.timestamp }]
+          events: [{ eventType: item.eventType, timestamp: item.timestamp }],
+          contextType
         });
         const eventId = data?.eventIds?.[0];
         if (eventId && item.evidence) {
@@ -237,9 +294,9 @@ export default function useProctoring({ isExamActive }) {
         // Best-effort — proctoring evidence should never block submission.
       }
     }
-  }, []);
+  }, [contextType]);
 
-  return { webcamStatus, screenStatus, blockedReason, onSuspiciousBehavior, flushNow };
+  return { webcamStatus, screenStatus, blockedReason, webcamNotice, onSuspiciousBehavior, flushNow };
 }
 
 function dataUrlToBlob(dataUrl) {
