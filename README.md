@@ -151,6 +151,18 @@ cd frontend && npm run dev
 
 Backend runs on `http://localhost:5000` (or your custom `PORT`), frontend on `http://localhost:5173`. Sign up with a `@vit.ac.in` or `@vitstudent.ac.in` email (the app enforces this domain restriction) to get started.
 
+## Production Deployment
+
+**Backend (Render, or similar):**
+- Set `NODE_ENV=production` in the platform's environment variables — the backend gates stack-trace exposure in error responses on this, and it must be exactly `production`, not left unset.
+- Set `FRONTEND_URLS` to the deployed frontend's exact origin (e.g. `https://your-app.vercel.app`) once you know it. Requests from origins not in this comma-separated allowlist are rejected by CORS. Multiple origins can be comma-separated if you have more than one frontend deployment (e.g. a preview URL and a production URL).
+- Set `FIREBASE_PROJECT_ID` / `FIREBASE_CLIENT_EMAIL` / `FIREBASE_PRIVATE_KEY` / `FIREBASE_WEB_API_KEY` and whichever AI provider keys you're using (`GROQ_API_KEY` at minimum) — see `backend/.env.example`.
+
+**Frontend:**
+- `frontend/.env.production` is committed (unlike `frontend/.env`) and is loaded automatically by `npm run build` in production mode. It currently points `VITE_API_URL` at the deployed backend. Update it if the backend URL changes.
+- The Firebase web config and backend URL in that file are public client-side values by design — visible in the deployed bundle's devtools regardless of whether they're in the repo — so committing them just means `npm run build` produces a working bundle on any hosting platform without extra dashboard configuration.
+- Most static-site platforms (Vercel, Netlify, Render static sites) just need the build command `npm run build` and publish directory `dist` pointed at `frontend/`.
+
 ## User Workflow
 
 ### Professor Flow
