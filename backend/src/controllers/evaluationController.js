@@ -2,6 +2,7 @@ const { createDocument, getDocument, updateDocument, queryDocuments, collections
 const { validateScore } = require('../services/validationService');
 const { calculateFinalScore, normalizeScore } = require('../services/calculationService');
 const { computeIntegrityScore } = require('../services/integrityScoreService');
+const { isValidUserKey } = require('../services/aiProviderService');
 
 async function evaluateSubmission(req, res) {
   try {
@@ -120,8 +121,13 @@ async function evaluateSubmission(req, res) {
 
     // Compute the behavioral integrity score after every successful
     // evaluation. Never blocks or fails the evaluation response — this is a
-    // secondary signal for the professor, not a gate on scoring.
+    // secondary signal for the professor, not a gate on scoring. There's no
+    // platform Groq key, so this only gets a real AI score when the
+    // professor's own key is attached (same BYOK header as AI evaluation);
+    // otherwise it degrades to the heuristic-only score automatically.
     try {
+      const rawUserKey = req.headers['x-user-ai-key'];
+      const userKey = rawUserKey && isValidUserKey('groq', rawUserKey) ? rawUserKey : null;
       const events = await queryDocuments(collections.EVENTS, [
         { field: 'submissionId', operator: '==', value: submissionId }
       ]);
@@ -129,7 +135,8 @@ async function evaluateSubmission(req, res) {
         submissionId,
         events,
         plagiarismScore,
-        aiDetectionScore: null
+        aiDetectionScore: null,
+        userKey
       });
     } catch (integrityErr) {
       console.error('Integrity score computation failed:', integrityErr.message);

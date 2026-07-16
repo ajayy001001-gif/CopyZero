@@ -4,6 +4,7 @@ import { professorAPI } from '../../services/api';
 import Sidebar from '../../components/layout/Sidebar';
 import LoadingDots from '../../components/common/LoadingDots';
 import AiEvaluatingAnimation from '../../components/common/AiEvaluatingAnimation';
+import { hasStoredAIKey } from '../../lib/aiKeyStorage';
 
 export default function EvaluateSubmission() {
   const { submissionId } = useParams();
@@ -248,7 +249,7 @@ export default function EvaluateSubmission() {
 
           {/* AI Evaluate Button */}
           {!aiAnalysis && !submission.score && (
-            <div className="flex justify-center">
+            <div className="flex flex-col items-center gap-2">
               <button
                 onClick={handleAiEvaluate}
                 disabled={evaluating}
@@ -260,6 +261,11 @@ export default function EvaluateSubmission() {
                   'Evaluate using AI'
                 )}
               </button>
+              {!hasStoredAIKey() && (
+                <p className="text-xs text-[var(--color-text-tertiary)]">
+                  Requires your own Groq key — open "Configure AI" in the sidebar first.
+                </p>
+              )}
             </div>
           )}
         </div>

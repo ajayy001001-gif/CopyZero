@@ -40,14 +40,17 @@ export const professorAPI = {
   updateRubric: (id, data) => api.put(`/api/professor/rubrics/${id}`, data),
 
   getSubmissions: (assignmentId) => api.get(`/api/professor/submissions/assignment/${assignmentId}`),
-  evaluateSubmission: (data) => api.post('/api/professor/evaluate', data),
+  // BYOK header also attached here so the automatic integrity-score
+  // computation (triggered server-side after this save) can use the same
+  // key — otherwise it degrades to a heuristic-only score, never a platform key.
+  evaluateSubmission: (data) => api.post('/api/professor/evaluate', data, { headers: getUserAIKeyHeader() }),
   overrideScore: (scoreId, data) => api.patch(`/api/professor/scores/${scoreId}/override`, data),
   getScores: (assignmentId) => api.get(`/api/professor/scores/assignment/${assignmentId}`),
 
   // ── Changed: renamed from ollamaEvaluate to aiEvaluate ──
   // Route stays /ollama-evaluate — the controller now calls Groq internally.
-  // BYOK: attaches X-User-AI-Key from sessionStorage if the user configured
-  // their own key — absent header falls back to the platform key.
+  // BYOK only: X-User-AI-Key from sessionStorage is required — there is no
+  // platform fallback, the backend rejects requests with no key.
   aiEvaluate: (submissionId) => api.post('/api/professor/ollama-evaluate', { submissionId }, { headers: getUserAIKeyHeader() }),
 
   // Keep old name as alias so nothing else breaks if referenced elsewhere
@@ -78,7 +81,6 @@ export const studentAPI = {
 
 export const aiAPI = {
   testKey: (provider, key) => api.post('/api/ai/test-key', { provider, key }),
-  getHealth: () => api.get('/api/health/ai'),
 };
 
 export default api;

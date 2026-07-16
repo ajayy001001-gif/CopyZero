@@ -3,76 +3,22 @@ const axios = require('axios');
 const GROQ_BASE_URL = process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1';
 const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
 
-// Site-wide quota guard — every Groq call in the app (evaluation, integrity
-// scoring, health checks) goes through callGroq(), so these caps protect the
-// shared free-tier credits regardless of which feature is calling it.
-// Tune via env vars if the free tier ceiling changes.
-const GROQ_LIMIT_PER_MIN = parseInt(process.env.GROQ_LIMIT_PER_MIN || '20', 10);
-const GROQ_DAILY_CALL_CAP = parseInt(process.env.GROQ_DAILY_CALL_CAP || '150', 10);
-
-function todayKey() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-const usage = { callCount: 0, windowStart: Date.now(), totalToday: 0, dayKey: todayKey() };
-
-function rollWindow() {
-  const now = Date.now();
-  if (now - usage.windowStart >= 60 * 1000) {
-    usage.callCount = 0;
-    usage.windowStart = now;
-  }
-  const key = todayKey();
-  if (usage.dayKey !== key) {
-    usage.totalToday = 0;
-    usage.dayKey = key;
-  }
-}
-
-// Used by health checks — never expose the API key here.
-function getGroqUsage() {
-  rollWindow();
-  return {
-    callsThisMinute: usage.callCount,
-    totalToday: usage.totalToday,
-    limitPerMin: GROQ_LIMIT_PER_MIN,
-    dailyCap: GROQ_DAILY_CALL_CAP
-  };
-}
-
+// BYOK only — there is no platform-funded Groq key. Every call requires the
+// caller's own key, already format-validated upstream. No shared quota to
+// protect here, since nothing is ever billed to the platform.
 function getGroqClient(apiKey) {
-  const key = apiKey || process.env.GROQ_API_KEY;
-  if (!key) throw new Error('GROQ_API_KEY missing');
+  if (!apiKey) throw new Error('GROQ_USER_KEY_REQUIRED');
   return axios.create({
     baseURL: GROQ_BASE_URL,
     headers: {
-      Authorization: `Bearer ${key}`,
+      Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json'
     },
     timeout: 30000
   });
 }
 
-// Kept deliberately small — this runs on Groq's free tier, so every call here
-// counts against a shared daily/per-minute quota. Trim prompt size and cap
-// output tokens rather than reaching for a bigger context.
-//
-// BYOK: when userKey is supplied (already format-validated by the caller),
-// it's used for this call only and the site-wide quota guard is skipped
-// entirely — it's the caller's own Groq quota, not the platform's.
 async function callGroq(messages, { maxTokens = 800, temperature = 0.2, userKey = null } = {}) {
-  if (!userKey) {
-    rollWindow();
-    if (usage.totalToday >= GROQ_DAILY_CALL_CAP) {
-      throw new Error('GROQ_QUOTA_EXCEEDED: daily call cap reached');
-    }
-    if (usage.callCount >= GROQ_LIMIT_PER_MIN) {
-      throw new Error('GROQ_QUOTA_EXCEEDED: per-minute limit reached');
-    }
-    usage.callCount += 1;
-    usage.totalToday += 1;
-  }
-
   const client = getGroqClient(userKey);
   const { data } = await client.post('/chat/completions', {
     model: GROQ_MODEL,
@@ -106,7 +52,7 @@ function extractJson(text) {
 
 // Single combined call: plagiarism signal + AI-text signal + criteria scoring.
 // Submission text and comparison set are both truncated to keep token usage
-// (and therefore quota burn) low.
+// (and therefore the caller's own quota burn) low.
 async function analyzeSubmission(text, criteria, otherSubmissions = [], userKey = null) {
   const criteriaList = criteria
     .map((c, i) => `${i + 1}. ${c.name} (${c.maxPoints}pts)${c.description ? ': ' + c.description : ''}`)
@@ -162,6 +108,8 @@ function combine(analysis) {
   return { score: final, riskLevel: risk, details, analysis };
 }
 
+// cfg.userKey is required — callers must validate format and reject before
+// reaching here (see groqEvaluationController.js).
 async function evaluateSubmissionWithGroq(data, cfg = {}) {
   const analysis = await analyzeSubmission(data.text, data.criteria, data.otherSubmissions || [], cfg.userKey || null);
   const plag = combine(analysis);
@@ -195,7 +143,7 @@ async function evaluateSubmissionWithGroq(data, cfg = {}) {
     breakdown,
     timestamp: new Date().toISOString(),
     usingGroq: true,
-    usingUserKey: !!cfg.userKey,
+    usingUserKey: true,
     model: GROQ_MODEL
   };
 
@@ -217,16 +165,20 @@ function buildFeedback(r) {
   return f;
 }
 
-async function checkGroqStatus() {
+// Only tests if a key is supplied — there's no platform key to fall back to.
+async function checkGroqStatus(userKey = null) {
+  if (!userKey) {
+    return { running: false, model: GROQ_MODEL, error: 'No key provided — bring your own Groq key to use AI evaluation' };
+  }
   try {
     await callGroq([
       { role: 'system', content: 'Reply with only the word OK.' },
       { role: 'user', content: 'ping' }
-    ], { maxTokens: 5, temperature: 0 });
+    ], { maxTokens: 5, temperature: 0, userKey });
     return { running: true, model: GROQ_MODEL };
   } catch (e) {
     return { running: false, model: GROQ_MODEL, error: e.message };
   }
 }
 
-module.exports = { evaluateSubmissionWithGroq, checkGroqStatus, callGroq, testGroqKey, getGroqUsage, GROQ_MODEL };
+module.exports = { evaluateSubmissionWithGroq, checkGroqStatus, callGroq, testGroqKey, GROQ_MODEL };

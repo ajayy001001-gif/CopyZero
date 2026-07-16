@@ -1,10 +1,10 @@
-const { createDocument, getDocument, updateDocument, queryDocuments, collections, logAudit } = require('../services/databaseService');
+const { createDocument, getDocument, queryDocuments, collections, logAudit } = require('../services/databaseService');
 const { calculateFileHash } = require('../utils/fileHandler');
 
 async function saveDraft(req, res) {
   try {
     const studentId = req.user.uid;
-    const { assignmentId, content, autoSave, blockchainTxHash, blockchainVersion } = req.body;
+    const { assignmentId, content, autoSave } = req.body;
 
     if (!assignmentId || !content) {
       return res.status(400).json({
@@ -38,10 +38,7 @@ async function saveDraft(req, res) {
       contentHash,
       savedAt: new Date().toISOString(),
       autoSave: autoSave || false,
-      version,
-      blockchainTxHash: blockchainTxHash || null,
-      blockchainVersion: blockchainVersion || null,
-      onChain: !!blockchainTxHash
+      version
     };
 
     const draft = await createDocument(collections.DRAFTS, draftData);
@@ -52,12 +49,7 @@ async function saveDraft(req, res) {
       'create',
       'draft',
       draft.id,
-      { 
-        version, 
-        autoSave: autoSave || false,
-        onChain: !!blockchainTxHash,
-        txHash: blockchainTxHash 
-      }
+      { version, autoSave: autoSave || false }
     );
 
     return res.status(201).json({
@@ -66,9 +58,7 @@ async function saveDraft(req, res) {
         id: draft.id,
         version: draft.version,
         savedAt: draft.savedAt,
-        contentHash: draft.contentHash,
-        onChain: draft.onChain,
-        blockchainTxHash: draft.blockchainTxHash
+        contentHash: draft.contentHash
       }
     });
 
@@ -97,10 +87,7 @@ async function getDraftsByAssignment(req, res) {
         version: draft.version,
         savedAt: draft.savedAt,
         autoSave: draft.autoSave,
-        contentHash: draft.contentHash,
-        onChain: draft.onChain,
-        blockchainTxHash: draft.blockchainTxHash,
-        blockchainVersion: draft.blockchainVersion
+        contentHash: draft.contentHash
       }))
     });
 
@@ -158,9 +145,7 @@ async function getAllMyDrafts(req, res) {
         version: draft.version,
         savedAt: draft.savedAt,
         autoSave: draft.autoSave,
-        contentHash: draft.contentHash,
-        onChain: draft.onChain,
-        blockchainTxHash: draft.blockchainTxHash
+        contentHash: draft.contentHash
       }))
     });
 
@@ -172,64 +157,9 @@ async function getAllMyDrafts(req, res) {
   }
 }
 
-async function verifyDraft(req, res) {
-  try {
-    const studentId = req.user.uid;
-    const { draftId } = req.params;
-
-    const draft = await getDocument(collections.DRAFTS, draftId);
-
-    if (!draft) {
-      return res.status(404).json({
-        error: 'Draft not found'
-      });
-    }
-
-    if (draft.studentId !== studentId) {
-      return res.status(403).json({
-        error: 'You can only verify your own drafts'
-      });
-    }
-
-    if (!draft.onChain) {
-      return res.status(400).json({
-        error: 'This draft is not recorded on blockchain'
-      });
-    }
-
-    const currentHash = calculateFileHash(draft.content);
-    const hashMatches = currentHash === draft.contentHash;
-
-    return res.status(200).json({
-      verified: hashMatches,
-      draft: {
-        id: draft.id,
-        version: draft.version,
-        contentHash: draft.contentHash,
-        blockchainTxHash: draft.blockchainTxHash,
-        blockchainVersion: draft.blockchainVersion,
-        savedAt: draft.savedAt
-      },
-      verification: {
-        hashMatches,
-        currentHash,
-        storedHash: draft.contentHash,
-        timestamp: new Date().toISOString()
-      }
-    });
-
-  } catch (error) {
-    console.error('Verify draft error:', error);
-    return res.status(500).json({
-      error: 'Failed to verify draft',
-    });
-  }
-}
-
 module.exports = {
   saveDraft,
   getDraftsByAssignment,
   getLatestDraft,
-  getAllMyDrafts,
-  verifyDraft
+  getAllMyDrafts
 };

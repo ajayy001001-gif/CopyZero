@@ -62,7 +62,7 @@ function heuristicIntegrityScore(signals, plagiarismScore, aiDetectionScore) {
   return {
     overallScore: score,
     riskLevel,
-    explanation: 'AI scoring was unavailable (quota reached or provider error), so this is a rule-based estimate from behavioral and content signals only.',
+    explanation: 'AI scoring was unavailable (no Groq key attached, or a provider error), so this is a rule-based estimate from behavioral and content signals only.',
     breakdown: {
       tabSwitching: -(signals.tabSwitchCount * 3),
       focusLoss: -(signals.browserFocusLossCount * 2),
@@ -73,10 +73,11 @@ function heuristicIntegrityScore(signals, plagiarismScore, aiDetectionScore) {
   };
 }
 
-// Kept intentionally small (400 max tokens, compact prompt) — this call
-// shares the same Groq quota guard as evaluation, so every integrity score
-// computed also counts against the site-wide daily cap.
-async function computeIntegrityScore({ submissionId, events, plagiarismScore, aiDetectionScore }) {
+// Kept intentionally small (400 max tokens, compact prompt). No platform
+// Groq key exists, so this only produces a real AI score when the caller
+// passes the professor's own BYOK key (userKey) — otherwise callGroq throws
+// immediately and the catch below degrades to the heuristic-only score.
+async function computeIntegrityScore({ submissionId, events, plagiarismScore, aiDetectionScore, userKey = null }) {
   const signals = computeSignals(events || []);
 
   const prompt = `You are assessing exam-taking behavior for academic integrity, combining automated proctoring signals with plagiarism/AI-detection results.
@@ -113,7 +114,7 @@ Return ONLY a JSON object, no markdown fences, no commentary, in exactly this sh
     const raw = await callGroq([
       { role: 'system', content: 'You are a fair, evidence-based academic integrity analyst. Always return valid JSON only, matching the requested schema exactly.' },
       { role: 'user', content: prompt }
-    ], { maxTokens: 400, temperature: 0.2 });
+    ], { maxTokens: 400, temperature: 0.2, userKey });
     result = extractJson(raw);
   } catch (err) {
     console.error(`[Integrity] AI scoring failed for submission ${submissionId}: ${err.message}`);

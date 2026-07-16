@@ -1,26 +1,30 @@
 const { evaluateSubmissionWithGroq, checkGroqStatus } = require('../services/groqEvaluationService');
-const { evaluateSubmissionWithHuggingFace } = require('../services/huggingFaceEvaluationService');
 const { isValidUserKey } = require('../services/aiProviderService');
 const { getDocument, collections, queryDocuments } = require('../services/databaseService');
 
+// BYOK only — there is no platform Groq key. Every evaluation requires the
+// professor's own key via the X-User-AI-Key header; missing or malformed
+// keys are rejected before any AI call is attempted, and never logged
+// beyond a boolean presence check.
 async function autoEvaluateWithGroq(req, res) {
   try {
     const professorId = req.user.uid;
     const { submissionId } = req.body;
 
-    // BYOK: a user-supplied key must match the expected Groq format exactly
-    // or the request is rejected outright — never silently ignored (that
-    // could mask a copy-paste error) and never logged beyond presence.
     const rawUserKey = req.headers['x-user-ai-key'];
-    let userKey = null;
-    if (rawUserKey) {
-      if (!isValidUserKey('groq', rawUserKey)) {
-        console.log('[AI] user-provided key used: false (rejected — invalid format)');
-        return res.status(400).json({ error: 'Invalid API key format' });
-      }
-      userKey = rawUserKey;
+    if (!rawUserKey) {
+      console.log('[AI] user-provided key used: false (missing)');
+      return res.status(400).json({
+        error: 'AI evaluation requires your own Groq API key',
+        help: 'Open "Configure AI" in the sidebar and add your Groq key — there is no shared platform key.'
+      });
     }
-    console.log(`[AI] user-provided key used: ${!!userKey}`);
+    if (!isValidUserKey('groq', rawUserKey)) {
+      console.log('[AI] user-provided key used: false (rejected — invalid format)');
+      return res.status(400).json({ error: 'Invalid API key format' });
+    }
+    const userKey = rawUserKey;
+    console.log('[AI] user-provided key used: true');
 
     console.log(`Starting Groq evaluation for submission: ${submissionId}`);
 
@@ -73,24 +77,8 @@ async function autoEvaluateWithGroq(req, res) {
       userKey
     };
 
-    let results;
-    let usedFallback = false;
-    let primaryError;
-
-    try {
-      console.log(`Using Groq model: ${config.model}`);
-      results = await evaluateSubmissionWithGroq(submissionData, config);
-    } catch (groqError) {
-      primaryError = groqError;
-      console.error('Groq evaluation failed, falling back to HuggingFace:', groqError.message);
-      try {
-        results = await evaluateSubmissionWithHuggingFace(submissionData);
-        usedFallback = true;
-      } catch (hfError) {
-        console.error('HuggingFace fallback also failed:', hfError.message);
-        throw primaryError; // report the original (more informative) Groq failure
-      }
-    }
+    console.log(`Using Groq model: ${config.model}`);
+    const results = await evaluateSubmissionWithGroq(submissionData, config);
 
     // Response shape is identical to the previous evaluation pipelines —
     // frontend needs no changes.
@@ -120,17 +108,13 @@ async function autoEvaluateWithGroq(req, res) {
         strengths: results.contentAnalysis?.strengths || [],
         improvements: results.contentAnalysis?.improvements || [],
         evaluatedAt: results.timestamp,
-        usingOllama: false,
-        usingNim: false,
-        usingGroq: !usedFallback,
-        usingHuggingFace: usedFallback,
-        usingUserKey: !!userKey && !usedFallback,
-        fallbackUsed: usedFallback,
-        model: usedFallback ? 'HuggingFace (fallback)' : config.model
+        usingGroq: true,
+        usingUserKey: true,
+        model: config.model
       }
     };
 
-    console.log(usedFallback ? '✅ Evaluation complete (via HuggingFace fallback)!' : '✅ Evaluation complete!');
+    console.log('✅ Evaluation complete!');
     return res.status(200).json(response);
 
   } catch (error) {
@@ -139,21 +123,18 @@ async function autoEvaluateWithGroq(req, res) {
     let errorMessage = 'AI evaluation failed';
     let helpText = '';
 
-    if (error.message.includes('GROQ_QUOTA_EXCEEDED')) {
-      errorMessage = 'AI evaluation quota reached';
-      helpText = 'This site has a limited AI evaluation quota to protect shared credits. Please try again later.';
-    } else if (error.message.includes('GROQ_API_KEY')) {
-      errorMessage = 'Groq API key not configured';
-      helpText = 'Add GROQ_API_KEY to your backend .env file';
+    if (error.message.includes('GROQ_USER_KEY_REQUIRED')) {
+      errorMessage = 'AI evaluation requires your own Groq API key';
+      helpText = 'Open "Configure AI" in the sidebar and add your Groq key.';
     } else if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
       errorMessage = 'AI evaluation timed out';
       helpText = 'The model took too long to respond. Try again.';
     } else if (error.response?.status === 429 || error.message.includes('rate limit') || error.message.includes('429')) {
-      errorMessage = 'Groq rate limit reached';
-      helpText = 'Wait a minute and try again — Groq free tier has a limited request rate.';
+      errorMessage = 'Your Groq key hit its rate limit';
+      helpText = 'Wait a minute and try again — this is your own Groq account\'s rate limit.';
     } else if (error.response?.status === 401 || error.response?.status === 403) {
-      errorMessage = 'Groq authentication failed';
-      helpText = 'Check that GROQ_API_KEY is valid';
+      errorMessage = 'Your Groq key was rejected';
+      helpText = 'Check that your key is valid and active in Configure AI.';
     } else if (error.message.includes('No JSON object found')) {
       errorMessage = 'AI response could not be parsed';
       helpText = 'The model did not return valid JSON. Try again.';
@@ -166,17 +147,19 @@ async function autoEvaluateWithGroq(req, res) {
   }
 }
 
+// Deliberately does NOT accept a user key here, even though the header may
+// be present — this route has no dedicated rate limiter (unlike the
+// properly-throttled POST /api/ai/test-key), so honoring a key here would
+// give an unrate-limited oracle for probing arbitrary key strings. Key
+// validity should only ever be checked via /api/ai/test-key.
 async function checkGroqHealth(req, res) {
   try {
-    const status = await checkGroqStatus();
+    const status = await checkGroqStatus(null);
 
     return res.status(200).json({
       running: status.running,
       model: status.model,
-      error: status.error || null,
-      message: status.running
-        ? `Groq is ready! Model: ${status.model}`
-        : `Groq error: ${status.error}`
+      message: 'BYOK required — use "Configure AI" to add and test your own Groq key.'
     });
 
   } catch (error) {

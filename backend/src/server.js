@@ -6,9 +6,6 @@ const dotenv = require('dotenv');
 
 dotenv.config();
 require('./config/firebase');
-const { verifyToken, checkVITEmail } = require('./middleware/auth');
-const { getProviderStatus } = require('./services/aiProviderService');
-const { getGroqUsage } = require('./services/groqEvaluationService');
 
 const app = express();
 
@@ -79,24 +76,6 @@ app.get('/api/health', (req, res) => {
     environment: process.env.NODE_ENV
   });
 });
-// Open to both roles (not just professor) since the "Configure AI" panel is
-// shown on both dashboards. Never exposes keys — only call counts.
-app.get('/api/health/ai', verifyToken, checkVITEmail, (req, res) => {
-  try {
-    const groq = getGroqUsage();
-    const status = getProviderStatus();
-    res.json({
-      groq,
-      nim: status.nim,
-      huggingFace: status.huggingFace,
-      activeProvider: 'groq'
-    });
-  } catch (error) {
-    console.error('AI health check error:', error);
-    res.status(500).json({ error: 'Failed to check AI provider status' });
-  }
-});
-
 const authRoutes = require('./routes/authRoutes');
 app.use('/api/auth', authRoutes);
 const professorRoutes = require('./routes/professorRoutes');

@@ -3,7 +3,6 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { studentAPI } from '../../services/api';
 import Sidebar from '../../components/layout/Sidebar';
 import LoadingDots from '../../components/common/LoadingDots';
-import BlockchainAnimation from '../../components/common/BlockchainAnimation';
 import useBehavioralTracker from '../../hooks/useBehavioralTracker';
 
 export default function SubmitAssignment() {
@@ -13,11 +12,8 @@ export default function SubmitAssignment() {
   const [assignment, setAssignment] = useState(null);
   const [file, setFile] = useState(null);
   const [content, setContent] = useState('');
-  const [useBlockchain, setUseBlockchain] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [verifying, setVerifying] = useState(false);
-  const [verified, setVerified] = useState(false);
   const [error, setError] = useState('');
   const [lastSaved, setLastSaved] = useState(null);
 
@@ -92,22 +88,12 @@ export default function SubmitAssignment() {
 
     setSubmitting(true);
 
-    if (useBlockchain) {
-      setVerifying(true);
-      // Simulate blockchain verification
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      setVerifying(false);
-      setVerified(true);
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-
     try {
       const response = await studentAPI.submitAssignment({
         assignmentId,
         fileContent: content,
         fileName: file ? file.name : 'text_submission.txt',
         fileType: file ? file.name.substring(file.name.lastIndexOf('.')) : '.txt',
-        submissionType: useBlockchain ? 'blockchain' : 'direct',
       });
       await flushNow(response.data.submission?.id);
       navigate('/student/dashboard');
@@ -239,51 +225,6 @@ export default function SubmitAssignment() {
               />
             </div>
 
-            {/* Submission Method */}
-            <div className="mb-6">
-              <label className="block text-xs text-[var(--color-text-secondary)] uppercase tracking-wider mb-3">
-                Submission Method
-              </label>
-              <div className="radio-group">
-                <label
-                  className={`radio-item ${!useBlockchain ? 'selected' : ''}`}
-                  onClick={() => setUseBlockchain(false)}
-                >
-                  <div className="radio-circle" />
-                  <span>Direct submission</span>
-                </label>
-                <label
-                  className={`radio-item ${useBlockchain ? 'selected' : ''}`}
-                  onClick={() => setUseBlockchain(true)}
-                >
-                  <div className="radio-circle" />
-                  <span>Blockchain verification</span>
-                </label>
-              </div>
-            </div>
-
-            {/* Blockchain Animation */}
-            {verifying && (
-              <div className="card mb-6 text-center">
-                <p className="text-sm text-[var(--color-text-secondary)] mb-4">
-                  Verifying on chain
-                </p>
-                <BlockchainAnimation
-                  isActive={true}
-                  blockNumber={12345678}
-                />
-              </div>
-            )}
-
-            {verified && (
-              <div className="card mb-6 text-center success-glow">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="mx-auto mb-2">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-                <p className="text-sm">Verified on chain</p>
-              </div>
-            )}
-
             {/* Draft saved info */}
             {lastSaved && (
               <p className="text-xs text-[var(--color-text-tertiary)] mb-4">
@@ -322,15 +263,7 @@ export default function SubmitAssignment() {
                 disabled={submitting || !content.trim()}
                 className="btn-primary flex-1"
               >
-                {submitting ? (
-                  useBlockchain ? (
-                    <LoadingDots text="Submitting..." />
-                  ) : (
-                    <LoadingDots text="" />
-                  )
-                ) : (
-                  'Submit Assignment'
-                )}
+                {submitting ? <LoadingDots text="" /> : 'Submit Assignment'}
               </button>
             </div>
           </form>
