@@ -15,10 +15,15 @@ const PORT = process.env.PORT || 5000;
 // first hop so req.ip / X-Forwarded-For are read correctly for rate limiting.
 app.set('trust proxy', 1);
 
-const allowedOrigins = (process.env.FRONTEND_URLS || '')
-  .split(',')
-  .map(origin => origin.trim())
-  .filter(Boolean);
+const KNOWN_FRONTEND_ORIGINS = ['https://copy-zero.vercel.app'];
+
+const allowedOrigins = [...new Set([
+  ...KNOWN_FRONTEND_ORIGINS,
+  ...(process.env.FRONTEND_URLS || '')
+    .split(',')
+    .map(origin => origin.trim())
+    .filter(Boolean),
+])];
 
 app.use(cors({
   origin(origin, callback) {
