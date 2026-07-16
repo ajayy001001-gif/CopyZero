@@ -122,7 +122,10 @@ async function autoEvaluateWithGroq(req, res) {
     let errorMessage = 'AI evaluation failed';
     let helpText = '';
 
-    if (error.message.includes('GROQ_API_KEY')) {
+    if (error.message.includes('GROQ_QUOTA_EXCEEDED')) {
+      errorMessage = 'AI evaluation quota reached';
+      helpText = 'This site has a limited AI evaluation quota to protect shared credits. Please try again later.';
+    } else if (error.message.includes('GROQ_API_KEY')) {
       errorMessage = 'Groq API key not configured';
       helpText = 'Add GROQ_API_KEY to your backend .env file';
     } else if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
@@ -141,8 +144,7 @@ async function autoEvaluateWithGroq(req, res) {
 
     return res.status(500).json({
       error: errorMessage,
-      help: helpText,
-      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      help: helpText
     });
   }
 }

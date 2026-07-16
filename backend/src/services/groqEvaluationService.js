@@ -3,6 +3,43 @@ const axios = require('axios');
 const GROQ_BASE_URL = process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1';
 const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
 
+// Site-wide quota guard — every Groq call in the app (evaluation, integrity
+// scoring, health checks) goes through callGroq(), so these caps protect the
+// shared free-tier credits regardless of which feature is calling it.
+// Tune via env vars if the free tier ceiling changes.
+const GROQ_LIMIT_PER_MIN = parseInt(process.env.GROQ_LIMIT_PER_MIN || '20', 10);
+const GROQ_DAILY_CALL_CAP = parseInt(process.env.GROQ_DAILY_CALL_CAP || '150', 10);
+
+function todayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+const usage = { callCount: 0, windowStart: Date.now(), totalToday: 0, dayKey: todayKey() };
+
+function rollWindow() {
+  const now = Date.now();
+  if (now - usage.windowStart >= 60 * 1000) {
+    usage.callCount = 0;
+    usage.windowStart = now;
+  }
+  const key = todayKey();
+  if (usage.dayKey !== key) {
+    usage.totalToday = 0;
+    usage.dayKey = key;
+  }
+}
+
+// Used by health checks — never expose the API key here.
+function getGroqUsage() {
+  rollWindow();
+  return {
+    callsThisMinute: usage.callCount,
+    totalToday: usage.totalToday,
+    limitPerMin: GROQ_LIMIT_PER_MIN,
+    dailyCap: GROQ_DAILY_CALL_CAP
+  };
+}
+
 function getGroqClient() {
   if (!process.env.GROQ_API_KEY) throw new Error('GROQ_API_KEY missing');
   return axios.create({
@@ -19,6 +56,16 @@ function getGroqClient() {
 // counts against a shared daily/per-minute quota. Trim prompt size and cap
 // output tokens rather than reaching for a bigger context.
 async function callGroq(messages, { maxTokens = 800, temperature = 0.2 } = {}) {
+  rollWindow();
+  if (usage.totalToday >= GROQ_DAILY_CALL_CAP) {
+    throw new Error('GROQ_QUOTA_EXCEEDED: daily call cap reached');
+  }
+  if (usage.callCount >= GROQ_LIMIT_PER_MIN) {
+    throw new Error('GROQ_QUOTA_EXCEEDED: per-minute limit reached');
+  }
+  usage.callCount += 1;
+  usage.totalToday += 1;
+
   const client = getGroqClient();
   const { data } = await client.post('/chat/completions', {
     model: GROQ_MODEL,
@@ -160,4 +207,4 @@ async function checkGroqStatus() {
   }
 }
 
-module.exports = { evaluateSubmissionWithGroq, checkGroqStatus };
+module.exports = { evaluateSubmissionWithGroq, checkGroqStatus, callGroq, getGroqUsage, GROQ_MODEL };

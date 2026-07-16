@@ -117,8 +117,7 @@ async function autoEvaluateWithOllama(req, res) {
 
     return res.status(500).json({
       error: errorMessage,
-      help: helpText,
-      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      help: helpText
     });
   }
 }

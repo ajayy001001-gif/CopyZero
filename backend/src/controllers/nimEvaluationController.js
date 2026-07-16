@@ -1,13 +1,14 @@
-const { evaluateSubmissionWithNim, checkNimStatus } = require('../services/nimEvaluationService');
-const { evaluateSubmissionWithHuggingFace } = require('../services/huggingFaceEvaluationService');
+const { evaluateSubmission, checkNimStatus } = require('../services/nimEvaluationService');
+const { getProviderStatus } = require('../services/aiProviderService');
 const { getDocument, collections, queryDocuments } = require('../services/databaseService');
 
+// Provider-agnostic: evaluateSubmission() routes through aiProviderService,
+// which tries NIM then HuggingFace and never throws. This controller no
+// longer needs its own try/catch fallback chain.
 async function autoEvaluateWithNim(req, res) {
   try {
     const professorId = req.user.uid;
     const { submissionId } = req.body;
-
-    console.log(`Starting NVIDIA NIM evaluation for submission: ${submissionId}`);
 
     const submission = await getDocument(collections.SUBMISSIONS, submissionId);
     if (!submission) {
@@ -31,7 +32,6 @@ async function autoEvaluateWithNim(req, res) {
 
     let rubric;
     if (rubrics.length === 0) {
-      console.log(`No rubric found for assignment ${assignment.id}, using default fallback.`);
       rubric = {
         criteria: [
           { criterionId: 'fallback_1', name: 'Content Quality', maxPoints: 50 },
@@ -53,31 +53,10 @@ async function autoEvaluateWithNim(req, res) {
       criteriaWeightage: assignment.criteriaWeightage
     };
 
-    const config = {
-      model: process.env.NVIDIA_NIM_MODEL || 'deepseek-ai/deepseek-v4-flash'
-    };
+    const results = await evaluateSubmission(submissionData);
 
-    let results;
-    let usedFallback = false;
-    let primaryError;
-
-    try {
-      console.log(`Using NVIDIA NIM model: ${config.model}`);
-      results = await evaluateSubmissionWithNim(submissionData, config);
-    } catch (nimError) {
-      primaryError = nimError;
-      console.error('NVIDIA NIM evaluation failed, falling back to HuggingFace:', nimError.message);
-      try {
-        results = await evaluateSubmissionWithHuggingFace(submissionData);
-        usedFallback = true;
-      } catch (hfError) {
-        console.error('HuggingFace fallback also failed:', hfError.message);
-        throw primaryError; // report the original (more informative) NIM failure
-      }
-    }
-
-    // Response shape is identical to the previous HuggingFace/Ollama pipeline —
-    // frontend needs no changes.
+    // Response shape is identical to previous evaluation pipelines — frontend
+    // needs no changes.
     const response = {
       success: true,
       submissionId,
@@ -104,44 +83,21 @@ async function autoEvaluateWithNim(req, res) {
         strengths: results.contentAnalysis?.strengths || [],
         improvements: results.contentAnalysis?.improvements || [],
         evaluatedAt: results.timestamp,
-        usingOllama: false,
-        usingHuggingFace: usedFallback,
-        usingNim: !usedFallback,
-        fallbackUsed: usedFallback,
-        model: usedFallback ? 'HuggingFace (fallback)' : config.model
+        provider: results.provider,
+        usingNim: results.usingNim,
+        usingHuggingFace: results.usingHuggingFace,
+        degraded: results.degraded
       }
     };
 
-    console.log(usedFallback ? '✅ Evaluation complete (via HuggingFace fallback)!' : '✅ Evaluation complete!');
     return res.status(200).json(response);
 
   } catch (error) {
+    // Internal details (provider errors, stack traces) never leave the
+    // server — log here only, respond with a generic message.
     console.error('AI evaluation error:', error);
-
-    let errorMessage = 'AI evaluation failed';
-    let helpText = '';
-
-    if (error.message.includes('NVIDIA_NIM_API_KEY')) {
-      errorMessage = 'NVIDIA NIM API key not configured';
-      helpText = 'Add NVIDIA_NIM_API_KEY to your backend .env file';
-    } else if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
-      errorMessage = 'AI evaluation timed out';
-      helpText = 'The model took too long to respond. Try again.';
-    } else if (error.response?.status === 429 || error.message.includes('rate limit') || error.message.includes('429')) {
-      errorMessage = 'NVIDIA NIM rate limit reached';
-      helpText = 'Wait a minute and try again';
-    } else if (error.response?.status === 401 || error.response?.status === 403) {
-      errorMessage = 'NVIDIA NIM authentication failed';
-      helpText = 'Check that NVIDIA_NIM_API_KEY is valid';
-    } else if (error.message.includes('No JSON object found')) {
-      errorMessage = 'AI response could not be parsed';
-      helpText = 'The model did not return valid JSON. Try again.';
-    }
-
     return res.status(500).json({
-      error: errorMessage,
-      help: helpText,
-      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      error: 'AI evaluation failed. Please try again shortly.'
     });
   }
 }
@@ -149,20 +105,15 @@ async function autoEvaluateWithNim(req, res) {
 async function checkNimHealth(req, res) {
   try {
     const status = await checkNimStatus();
-
     return res.status(200).json({
       running: status.running,
-      model: status.model,
-      error: status.error || null,
-      message: status.running
-        ? `NVIDIA NIM is ready! Model: ${status.model}`
-        : `NVIDIA NIM error: ${status.error}`
+      model: status.model
     });
-
   } catch (error) {
+    console.error('NIM health check error:', error);
     return res.status(500).json({
       running: false,
-      error: 'Failed to check NVIDIA NIM status',
+      error: 'Failed to check AI provider status'
     });
   }
 }

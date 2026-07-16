@@ -1,19 +1,15 @@
-const huggingFaceService = require('../services/huggingFaceEvaluationService');
+const { evaluateSubmission } = require('../services/nimEvaluationService');
+const { getProviderStatus } = require('../services/aiProviderService');
 const {
   getDocument,
   collections,
-  queryDocuments,
-  createDocument,
-  updateDocument, // ✅ FIXED: was missing
-  logAudit
+  queryDocuments
 } = require('../services/databaseService');
 
-const { validateScore } = require('../services/validationService');
-const { calculateFinalScore } = require('../services/calculationService');
-
 /**
- * HuggingFace AI Evaluation Controller
- * Production-ready version
+ * Provider-agnostic AI evaluation controller. evaluateSubmission() routes
+ * every call through aiProviderService.callAI() (NIM → HuggingFace →
+ * degraded), so this controller no longer talks to HuggingFace directly.
  */
 
 // ─────────────────────────────────────────────────────────────
@@ -50,19 +46,6 @@ async function autoEvaluateWithAI(req, res) {
       });
     }
 
-    // Prevent duplicate evaluation
-    const existingScores = await queryDocuments(collections.SCORES, [
-      { field: 'submissionId', operator: '==', value: submissionId }
-    ]);
-
-    if (existingScores.length > 0) {
-      return res.status(409).json({
-        error: 'Submission already evaluated',
-        score: existingScores[0]
-      });
-    }
-
-    // Get rubric
     const rubrics = await queryDocuments(collections.RUBRICS, [
       { field: 'assignmentId', operator: '==', value: assignment.id }
     ]);
@@ -75,7 +58,8 @@ async function autoEvaluateWithAI(req, res) {
 
     const rubric = rubrics[0];
 
-    const structuredRubric = {
+    const submissionData = {
+      text: submission.fileContent,
       criteria: rubric.criteria.map(c => ({
         name: c.name,
         description: c.description || '',
@@ -86,107 +70,44 @@ async function autoEvaluateWithAI(req, res) {
       criteriaWeightage: assignment.criteriaWeightage || 70
     };
 
-    // ─── AI Evaluation ──────────────────────────────────────
-    const evaluation = await huggingFaceService.evaluateAssignment(
-      assignment.description || assignment.title,
-      structuredRubric,
-      submission.fileContent
-    );
-
-    // ─── Plagiarism Check (Safe Fallback) ───────────────────
-    let plagiarismCheck = {
-      plagiarism_score: 0,
-      confidence: 'low',
-      risk_level: 'none',
-      suspicious_patterns: [],
-      recommendations: 'Plagiarism check unavailable'
-    };
-
-    try {
-      plagiarismCheck = await huggingFaceService.checkPlagiarism(
-        submission.fileContent,
-        submission.previousDrafts || [],
-        []
-      );
-    } catch (err) {
-      console.error('Plagiarism check failed:', err.message);
-    }
-
-    // ─── Map Criteria Scores ────────────────────────────────
-    const criteriaScores = rubric.criteria.map((criterion) => {
-      const aiCriterion = evaluation.criteria_scores?.[criterion.name];
-
-      return {
-        criterionId: criterion.criterionId,
-        name: criterion.name,
-        points: aiCriterion?.score || 0,
-        maxPoints: aiCriterion?.max_score || criterion.maxPoints,
-        feedback: aiCriterion?.feedback || 'Not evaluated'
-      };
-    });
-
-    // ─── Calculate Final Score ──────────────────────────────
-    const calculation = calculateFinalScore(
-      plagiarismCheck.plagiarism_score,
-      criteriaScores,
-      structuredRubric.plagiarismWeightage,
-      structuredRubric.criteriaWeightage
-    );
-
-    const scoreData = {
-      submissionId,
-      assignmentId: submission.assignmentId,
-      studentId: submission.studentId,
-      studentName: submission.studentName,
-      evaluatedBy: 'AI',
-      evaluatedByName: 'HuggingFace AI',
-      plagiarismScore: plagiarismCheck.plagiarism_score,
-      criteriaScores,
-      feedback: evaluation.overall_feedback || 'AI evaluation completed',
-      ...calculation,
-      overridden: false,
-      overrideReason: null,
-      evaluatedAt: new Date().toISOString(),
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      aiMetadata: {
-        model: process.env.HUGGINGFACE_MODEL || 'meta-llama/Llama-3.2-3B-Instruct',
-        grade: evaluation.grade,
-        percentage: evaluation.percentage
-      }
-    };
-
-    const validation = validateScore(scoreData);
-    if (!validation.valid) {
-      return res.status(400).json({
-        error: 'Validation failed',
-        details: validation.errors
-      });
-    }
-
-    const score = await createDocument(collections.SCORES, scoreData);
-
-    await logAudit(
-      professorId,
-      req.user.name || req.user.email,
-      'evaluate',
-      'score',
-      score.id,
-      { action: 'AI evaluation' }
-    );
+    const results = await evaluateSubmission(submissionData);
 
     return res.status(200).json({
       success: true,
       submissionId,
-      scoreId: score.id,
-      finalScore: calculation.finalScore,
-      weightedScore: calculation.weightedScore
+      evaluation: {
+        plagiarismScore: results.breakdown.plagiarismScore,
+        criteriaScores: rubric.criteria.map((criterion, index) => {
+          const aiScore = results.contentAnalysis?.criteriaScores[index];
+          return {
+            criterionId: criterion.criterionId,
+            name: criterion.name,
+            points: Math.round((aiScore?.score / 100) * criterion.maxPoints),
+            maxPoints: criterion.maxPoints,
+            aiScore: aiScore?.score,
+            reasoning: aiScore?.reasoning
+          };
+        }),
+        finalScore: results.finalScore,
+        breakdown: results.breakdown,
+        feedback: results.feedback
+      },
+      metadata: {
+        plagiarismDetails: results.plagiarism?.details,
+        strengths: results.contentAnalysis?.strengths || [],
+        improvements: results.contentAnalysis?.improvements || [],
+        evaluatedAt: results.timestamp,
+        provider: results.provider,
+        usingNim: results.usingNim,
+        usingHuggingFace: results.usingHuggingFace,
+        degraded: results.degraded
+      }
     });
 
   } catch (error) {
     console.error('AI evaluation error:', error);
     return res.status(500).json({
-      error: 'AI evaluation failed',
+      error: 'AI evaluation failed. Please try again shortly.'
     });
   }
 }
@@ -206,6 +127,9 @@ async function getEvaluationDetails(req, res) {
     }
 
     const assignment = await getDocument(collections.ASSIGNMENTS, submission.assignmentId);
+    if (!assignment) {
+      return res.status(404).json({ error: 'Assignment not found' });
+    }
 
     const isProfessor = userRole === 'professor' && assignment.professorId === userId;
     const isStudent = userRole === 'student' && submission.studentId === userId;
@@ -234,7 +158,7 @@ async function getEvaluationDetails(req, res) {
   } catch (error) {
     console.error('Get evaluation error:', error);
     return res.status(500).json({
-      error: 'Failed to fetch evaluation',
+      error: 'Failed to fetch evaluation'
     });
   }
 }
@@ -244,19 +168,15 @@ async function getEvaluationDetails(req, res) {
 // ─────────────────────────────────────────────────────────────
 async function checkAIHealth(req, res) {
   try {
-    const hasToken = !!process.env.HUGGINGFACE_API_TOKEN;
-
+    const status = getProviderStatus();
     return res.status(200).json({
-      configured: hasToken,
-      model: process.env.HUGGINGFACE_MODEL,
-      message: hasToken
-        ? 'HuggingFace AI is configured'
-        : 'HUGGINGFACE_API_TOKEN missing in .env'
+      nim: status.nim,
+      huggingFace: status.huggingFace
     });
-
   } catch (error) {
+    console.error('AI health check error:', error);
     return res.status(500).json({
-      error: 'Failed to check AI health',
+      error: 'Failed to check AI provider status'
     });
   }
 }

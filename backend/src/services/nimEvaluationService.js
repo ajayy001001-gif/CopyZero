@@ -1,42 +1,12 @@
-const axios = require('axios');
-
-const NIM_BASE_URL = process.env.NVIDIA_NIM_BASE_URL || 'https://integrate.api.nvidia.com/v1';
-const NIM_MODEL = process.env.NVIDIA_NIM_MODEL || 'deepseek-ai/deepseek-v4-flash';
-
-function getNimClient() {
-  if (!process.env.NVIDIA_NIM_API_KEY) throw new Error('NVIDIA_NIM_API_KEY missing');
-  return axios.create({
-    baseURL: NIM_BASE_URL,
-    headers: {
-      Authorization: `Bearer ${process.env.NVIDIA_NIM_API_KEY}`,
-      'Content-Type': 'application/json'
-    },
-    timeout: 60000
-  });
-}
-
-async function callNim(messages, { maxTokens = 1500, temperature = 0.2 } = {}) {
-  const client = getNimClient();
-  const { data } = await client.post('/chat/completions', {
-    model: NIM_MODEL,
-    messages,
-    max_tokens: maxTokens,
-    temperature,
-    stream: false
-  });
-  return data.choices?.[0]?.message?.content || '';
-}
+const aiProviderService = require('./aiProviderService');
 
 function extractJson(text) {
   const match = text.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error('No JSON object found in NIM response');
+  if (!match) throw new Error('No JSON object found in AI response');
   return JSON.parse(match[0]);
 }
 
-// Single combined call: plagiarism signal + AI-text signal + criteria scoring.
-// One request per submission (rate-limit friendly) instead of three separate
-// model calls like the old HuggingFace pipeline used.
-async function analyzeSubmission(text, criteria, otherSubmissions = []) {
+function buildPrompt(text, criteria, otherSubmissions) {
   const criteriaList = criteria
     .map((c, i) => `${i + 1}. ${c.name} (${c.maxPoints}pts)${c.description ? ': ' + c.description : ''}`)
     .join('\n');
@@ -48,7 +18,7 @@ async function analyzeSubmission(text, criteria, otherSubmissions = []) {
         .join('\n\n')
     : '(No other submissions to compare against yet.)';
 
-  const userPrompt = `You are evaluating a student's assignment submission for academic integrity and quality.
+  return `You are evaluating a student's assignment submission for academic integrity and quality.
 
 CRITERIA:
 ${criteriaList}
@@ -75,13 +45,57 @@ Return ONLY a JSON object, no markdown fences, no commentary, in exactly this sh
   "improvements": ["<point>"],
   "detailedFeedback": "<2-3 sentences, specific to this submission>"
 }`;
+}
 
-  const raw = await callNim([
+// Lightweight placeholder scores used only when every AI provider is
+// unavailable/rate-limited — keeps the response shape identical so the rest
+// of the scoring pipeline (combine/weighting/feedback) doesn't need to
+// special-case a missing analysis.
+function degradedAnalysis(text, criteria) {
+  const wordCount = text.split(/\s+/).filter(Boolean).length;
+  const baseScore = wordCount > 300 ? 70 : 55;
+  return {
+    studentPlagiarismScore: 70,
+    similarSubmissionsFound: 0,
+    maxSimilarityNote: 'Automated comparison unavailable — all AI providers were rate-limited.',
+    aiGeneratedTextScore: 65,
+    aiLikelihoodPercent: 35,
+    aiVerdict: 'Unknown — heuristic fallback',
+    criteriaScores: criteria.map(c => ({
+      name: c.name,
+      score: baseScore,
+      reasoning: 'Heuristic placeholder — AI providers unavailable, re-run evaluation later.'
+    })),
+    overallQuality: baseScore,
+    strengths: ['Submission received.'],
+    improvements: ['Re-run evaluation once an AI provider is available for a full review.'],
+    detailedFeedback: 'All AI providers were rate-limited or unavailable, so this is a heuristic placeholder score, not a full evaluation. Re-run once capacity is available.'
+  };
+}
+
+// Single combined call: plagiarism signal + AI-text signal + criteria
+// scoring. Routed through aiProviderService, which transparently tries NIM
+// then HuggingFace and never throws.
+async function analyzeSubmission(text, criteria, otherSubmissions = []) {
+  const prompt = buildPrompt(text, criteria, otherSubmissions);
+
+  const result = await aiProviderService.callAI([
     { role: 'system', content: 'You are a rigorous, fair academic integrity and content-quality evaluator. Always return valid JSON only, matching the requested schema exactly. Base every score on evidence in the text provided, never invent details.' },
-    { role: 'user', content: userPrompt }
-  ]);
+    { role: 'user', content: prompt }
+  ], { maxTokens: 1500, temperature: 0.2 });
 
-  return extractJson(raw);
+  if (result.degraded) {
+    return { analysis: degradedAnalysis(text, criteria), provider: 'degraded', degraded: true };
+  }
+
+  try {
+    return { analysis: extractJson(result.content), provider: result.provider, degraded: false };
+  } catch (err) {
+    // Malformed JSON from a provider is treated the same as unavailable —
+    // never surface the raw model output to the caller.
+    console.error(`[AI] Failed to parse ${result.provider} response as JSON: ${err.message}`);
+    return { analysis: degradedAnalysis(text, criteria), provider: 'degraded', degraded: true };
+  }
 }
 
 function combine(analysis) {
@@ -91,8 +105,8 @@ function combine(analysis) {
   return { score: final, riskLevel: risk, details, analysis };
 }
 
-async function evaluateSubmissionWithNim(data, cfg = {}) {
-  const analysis = await analyzeSubmission(data.text, data.criteria, data.otherSubmissions || []);
+async function evaluateSubmission(data) {
+  const { analysis, provider, degraded } = await analyzeSubmission(data.text, data.criteria, data.otherSubmissions || []);
   const plag = combine(analysis);
 
   const pw = data.plagiarismWeightage || 30;
@@ -123,8 +137,10 @@ async function evaluateSubmissionWithNim(data, cfg = {}) {
     finalScore,
     breakdown,
     timestamp: new Date().toISOString(),
-    usingNim: true,
-    model: NIM_MODEL
+    provider,
+    degraded,
+    usingNim: provider === 'nim',
+    usingHuggingFace: provider === 'huggingface'
   };
 
   result.feedback = buildFeedback(result);
@@ -132,7 +148,10 @@ async function evaluateSubmissionWithNim(data, cfg = {}) {
 }
 
 function buildFeedback(r) {
-  let f = '=== AI EVALUATION (NVIDIA NIM — DeepSeek V4 Flash) ===\n\n';
+  const providerLabel = r.degraded
+    ? 'DEGRADED — all AI providers unavailable'
+    : r.usingNim ? 'NVIDIA NIM — DeepSeek V4 Flash' : 'HuggingFace (fallback)';
+  let f = `=== AI EVALUATION (${providerLabel}) ===\n\n`;
   f += `FINAL: ${r.finalScore}/10\n\n`;
   f += `PLAGIARISM/INTEGRITY: ${r.plagiarism.score}/100 — ${r.plagiarism.details}\n\n`;
   f += 'CONTENT:\n';
@@ -141,20 +160,22 @@ function buildFeedback(r) {
   if (r.contentAnalysis.strengths?.length) f += 'STRENGTHS: ' + r.contentAnalysis.strengths.join(', ') + '\n';
   if (r.contentAnalysis.improvements?.length) f += 'IMPROVEMENTS: ' + r.contentAnalysis.improvements.join(', ') + '\n';
   if (r.contentAnalysis.detailedFeedback) f += `\n${r.contentAnalysis.detailedFeedback}\n`;
-  f += `\n---\nModel: ${r.model}\n`;
   return f;
 }
 
 async function checkNimStatus() {
-  try {
-    await callNim([
-      { role: 'system', content: 'Reply with only the word OK.' },
-      { role: 'user', content: 'ping' }
-    ], { maxTokens: 5, temperature: 0 });
-    return { running: true, model: NIM_MODEL };
-  } catch (e) {
-    return { running: false, model: NIM_MODEL, error: e.message };
-  }
+  const status = aiProviderService.getProviderStatus();
+  return {
+    running: status.nim.available,
+    model: process.env.NVIDIA_NIM_MODEL || 'deepseek-ai/deepseek-v4-flash',
+    error: status.nim.available ? null : 'NIM unavailable or rate-limited'
+  };
 }
 
-module.exports = { evaluateSubmissionWithNim, checkNimStatus };
+module.exports = {
+  evaluateSubmission,
+  // Back-compat alias — same provider-agnostic function, old name kept so
+  // any existing import site keeps working.
+  evaluateSubmissionWithNim: evaluateSubmission,
+  checkNimStatus
+};

@@ -1,6 +1,7 @@
 const { createDocument, getDocument, updateDocument, queryDocuments, collections, logAudit } = require('../services/databaseService');
 const { validateScore } = require('../services/validationService');
 const { calculateFinalScore, normalizeScore } = require('../services/calculationService');
+const { computeIntegrityScore } = require('../services/integrityScoreService');
 
 async function evaluateSubmission(req, res) {
   try {
@@ -116,6 +117,23 @@ async function evaluateSubmission(req, res) {
       score: calculation.finalScore,
       evaluatedAt: new Date().toISOString()
     });
+
+    // Compute the behavioral integrity score after every successful
+    // evaluation. Never blocks or fails the evaluation response — this is a
+    // secondary signal for the professor, not a gate on scoring.
+    try {
+      const events = await queryDocuments(collections.EVENTS, [
+        { field: 'submissionId', operator: '==', value: submissionId }
+      ]);
+      await computeIntegrityScore({
+        submissionId,
+        events,
+        plagiarismScore,
+        aiDetectionScore: null
+      });
+    } catch (integrityErr) {
+      console.error('Integrity score computation failed:', integrityErr.message);
+    }
 
     return res.status(isUpdate ? 200 : 201).json({
       message: isUpdate ? 'Submission score updated successfully' : 'Submission evaluated successfully',

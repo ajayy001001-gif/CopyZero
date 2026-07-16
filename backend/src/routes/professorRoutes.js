@@ -1,28 +1,31 @@
 const express = require('express');
-const rateLimit = require('express-rate-limit');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const router = express.Router();
 const assignmentController = require('../controllers/assignmentController');
 const rubricController = require('../controllers/rubricController');
 const evaluationController = require('../controllers/evaluationController');
 const groqEvaluationController = require('../controllers/groqEvaluationController');
 // NOTE: AI evaluation runs on Groq (llama-3.1-8b-instant) with an automatic
-// HuggingFace fallback if Groq fails. nimEvaluationController/Service (NVIDIA
-// NIM) proved unreliable (deepseek-v4-pro was unresponsive, deepseek-v4-flash
-// still fell back frequently) and is no longer wired up here — kept in the
-// repo unused, along with ollamaEvaluationController and
-// huggingFaceEvaluationController's professor-facing route, for a follow-up
-// cleanup pass.
+// HuggingFace fallback if Groq fails — this is the only active provider for
+// now. nimEvaluationController/aiProviderService (NIM primary + HF gateway)
+// were built out but are kept unwired in the repo, along with
+// ollamaEvaluationController, for a possible future follow-up.
 
 const { verifyToken, checkVITEmail, checkRole } = require('../middleware/auth');
 
 // Groq's free tier has a limited request rate — keep AI evaluation usage
 // light and cap it well below that ceiling regardless of how many
-// professors are using the app concurrently.
+// professors are using the app concurrently. Keyed per-professor (not per-IP)
+// so the cap can't be sidestepped by switching networks, and kept
+// deliberately tight since this is a hosted site with shared credits — see
+// GROQ_LIMIT_PER_MIN / GROQ_DAILY_CALL_CAP in groqEvaluationService.js for
+// the site-wide cap underneath this per-user one.
 const aiEvaluateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 15,
+  limit: 10,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req) => req.user?.uid || ipKeyGenerator(req.ip),
   message: { error: 'AI evaluation limit reached, please wait a few minutes and try again' }
 });
 
@@ -81,7 +84,7 @@ router.get('/scores/assignment/:assignmentId',
   verifyToken, checkVITEmail, checkRole(['professor']),
   evaluationController.getScoresByAssignment);
 
-// ── AI evaluation routes (now powered by Groq internally) ──────────────────────
+// ── AI evaluation routes (powered by Groq internally) ───────────────────────────
 // Route paths kept the same so frontend needs no changes
 router.post('/ollama-evaluate',
   verifyToken, checkVITEmail, checkRole(['professor']), aiEvaluateLimiter,

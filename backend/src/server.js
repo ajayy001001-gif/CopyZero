@@ -6,6 +6,8 @@ const dotenv = require('dotenv');
 
 dotenv.config();
 require('./config/firebase');
+const { verifyToken, checkRole } = require('./middleware/auth');
+const { getProviderStatus } = require('./services/aiProviderService');
 
 const app = express();
 
@@ -76,12 +78,31 @@ app.get('/api/health', (req, res) => {
     environment: process.env.NODE_ENV
   });
 });
+app.get('/api/health/ai', verifyToken, checkRole(['professor']), (req, res) => {
+  try {
+    const status = getProviderStatus();
+    const activeProvider = status.nim.available ? 'nim' : status.huggingFace.available ? 'huggingface' : 'degraded';
+    res.json({
+      nim: status.nim,
+      huggingFace: status.huggingFace,
+      activeProvider
+    });
+  } catch (error) {
+    console.error('AI health check error:', error);
+    res.status(500).json({ error: 'Failed to check AI provider status' });
+  }
+});
+
 const authRoutes = require('./routes/authRoutes');
 app.use('/api/auth', authRoutes);
 const professorRoutes = require('./routes/professorRoutes');
 app.use('/api/professor', professorRoutes);
 const studentRoutes = require('./routes/studentRoutes');
 app.use('/api/student', studentRoutes);
+const eventRoutes = require('./routes/eventRoutes');
+app.use('/api/events', eventRoutes);
+const integrityRoutes = require('./routes/integrityRoutes');
+app.use('/api/integrity', integrityRoutes);
 
 app.use((req, res) => {
   res.status(404).json({
