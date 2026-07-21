@@ -13,9 +13,10 @@ function IntegrityPanel({ integrity }) {
   }
   const s = integrity.signals || {};
   const color = RISK_COLOR[integrity.riskLevel] || 'var(--color-text-secondary)';
+  const isHeuristic = integrity.isHeuristic || integrity.scoringProvider === 'heuristic';
   return (
     <div>
-      <div className="flex items-center gap-3 mb-3">
+      <div className="flex items-center gap-3 mb-3 flex-wrap">
         <div>
           <span className="text-2xl font-light">{integrity.overallScore}</span>
           <span className="text-sm text-[var(--color-text-tertiary)]">/100</span>
@@ -23,6 +24,11 @@ function IntegrityPanel({ integrity }) {
         <span className="text-xs px-2 py-1 rounded-md" style={{ background: `${color}22`, color }}>
           {integrity.riskLevel} risk
         </span>
+        {isHeuristic && (
+          <span className="text-xs px-2 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text-tertiary)] bg-[var(--color-surface)]">
+            Score calculated using basic heuristic fallback (AI service unavailable)
+          </span>
+        )}
       </div>
       {integrity.explanation && (
         <p className="text-sm text-[var(--color-text-secondary)] mb-3">{integrity.explanation}</p>

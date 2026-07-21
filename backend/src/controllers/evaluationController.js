@@ -121,11 +121,8 @@ async function evaluateSubmission(req, res) {
 
     // Compute the behavioral integrity score after every successful
     // evaluation. Never blocks or fails the evaluation response — this is a
-    // secondary signal for the professor, not a gate on scoring. There's no
-    // platform Groq key, so this only gets a real AI score when the
-    // professor's own key is attached (same BYOK header as AI evaluation);
-    // otherwise it degrades to the heuristic-only score automatically.
-    try {
+    // secondary signal for the professor, not a gate on scoring.
+    (async () => {
       const rawUserKey = req.headers['x-user-ai-key'];
       const userKey = rawUserKey && isValidUserKey('groq', rawUserKey) ? rawUserKey : null;
       const events = await queryDocuments(collections.EVENTS, [
@@ -136,7 +133,7 @@ async function evaluateSubmission(req, res) {
         ? { consistent: testResultPlausibility.consistent, concern: typeof testResultPlausibility.concern === 'string' ? testResultPlausibility.concern.slice(0, 300) : null }
         : null;
 
-      await computeIntegrityScore({
+      return computeIntegrityScore({
         submissionId,
         events,
         plagiarismScore,
@@ -144,9 +141,9 @@ async function evaluateSubmission(req, res) {
         userKey,
         testResultPlausibility: safePlausibility
       });
-    } catch (integrityErr) {
-      console.error('Integrity score computation failed:', integrityErr.message);
-    }
+    })().catch((integrityErr) => {
+      console.error(`Background integrity check failed for submission ${submissionId}:`, integrityErr);
+    });
 
     return res.status(isUpdate ? 200 : 201).json({
       message: isUpdate ? 'Submission score updated successfully' : 'Submission evaluated successfully',

@@ -23,13 +23,31 @@ async function createDocument(collectionName, data, customId = null) {
     const collectionRef = db.collection(collectionName);
     
     if (customId) {
-      await collectionRef.doc(customId).set(data);
+      const docRef = collectionRef.doc(customId);
+      if (typeof docRef.create === 'function') {
+        await docRef.create(data);
+      } else {
+        const doc = await docRef.get();
+        if (doc.exists) {
+          const error = new Error('Document already exists');
+          error.code = 409;
+          error.status = 409;
+          throw error;
+        }
+        await docRef.set(data);
+      }
       return { id: customId, ...data };
     } else {
       const docRef = await collectionRef.add(data);
       return { id: docRef.id, ...data };
     }
   } catch (error) {
+    if (error.code === 6 || error.code === 409 || error.status === 409 || (error.message && error.message.includes('already exists'))) {
+      const conflictErr = new Error('Document already exists');
+      conflictErr.code = 409;
+      conflictErr.status = 409;
+      throw conflictErr;
+    }
     throw new Error(`Failed to create document: ${error.message}`);
   }
 }

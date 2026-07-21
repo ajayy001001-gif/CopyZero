@@ -96,7 +96,18 @@ async function submitAssignment(req, res) {
       });
     }
 
-    const submission = await createDocument(collections.SUBMISSIONS, submissionData);
+    const submissionIdDoc = `${assignmentId}_${studentId}`;
+    let submission;
+    try {
+      submission = await createDocument(collections.SUBMISSIONS, submissionData, submissionIdDoc);
+    } catch (err) {
+      if (err.code === 409 || err.status === 409 || (err.message && err.message.includes('already exists'))) {
+        return res.status(409).json({
+          error: 'You have already submitted this assignment'
+        });
+      }
+      throw err;
+    }
 
     await logAudit(
       studentId,
@@ -119,6 +130,11 @@ async function submitAssignment(req, res) {
     });
 
   } catch (error) {
+    if (error.code === 409 || error.status === 409 || (error.message && error.message.includes('already exists'))) {
+      return res.status(409).json({
+        error: 'You have already submitted this assignment'
+      });
+    }
     console.error('Submit assignment error:', error);
     return res.status(500).json({
       error: 'Failed to submit assignment',

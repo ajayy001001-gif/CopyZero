@@ -82,6 +82,8 @@ function heuristicIntegrityScore(signals, plagiarismScore, aiDetectionScore, tes
     overallScore: score,
     riskLevel,
     explanation: 'AI scoring was unavailable (no Groq key attached, or a provider error), so this is a rule-based estimate from behavioral, proctoring, and content signals only.',
+    isHeuristic: true,
+    scoringProvider: 'heuristic',
     breakdown: {
       tabSwitching: -(signals.tabSwitchCount * 3),
       focusLoss: -(signals.browserFocusLossCount * 2),
@@ -151,6 +153,8 @@ Return ONLY a JSON object, no markdown fences, no commentary, in exactly this sh
       { role: 'user', content: prompt }
     ], { maxTokens: 450, temperature: 0.2, userKey });
     result = extractJson(raw);
+    result.isHeuristic = false;
+    result.scoringProvider = 'groq';
   } catch (err) {
     console.error(`[Integrity] AI scoring failed for submission ${submissionId}: ${err.message}`);
     result = heuristicIntegrityScore(signals, plagiarismScore, aiDetectionScore, testResultPlausibility);
@@ -162,6 +166,8 @@ Return ONLY a JSON object, no markdown fences, no commentary, in exactly this sh
     overallScore: result.overallScore,
     riskLevel: result.riskLevel,
     explanation: result.explanation,
+    isHeuristic: result.isHeuristic ?? true,
+    scoringProvider: result.scoringProvider ?? 'heuristic',
     breakdown: result.breakdown,
     plagiarismScore: typeof plagiarismScore === 'number' ? plagiarismScore : null,
     aiDetectionScore: typeof aiDetectionScore === 'number' ? aiDetectionScore : null,

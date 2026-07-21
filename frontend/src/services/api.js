@@ -20,6 +20,23 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (!error.response) {
+      console.error('Network or CORS error:', error);
+    } else {
+      const { status } = error.response;
+      if (status === 401 || status === 403) {
+        console.warn(`Auth warning (${status}): Unauthorized or forbidden request`, error.response.data);
+      } else if (status >= 500) {
+        console.error(`Server error (${status}):`, error.response.data);
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 export const authAPI = {
   signup: (data) => api.post('/api/auth/signup', data),
   login: (data) => api.post('/api/auth/login', data),
